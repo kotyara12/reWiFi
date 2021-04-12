@@ -1,0 +1,18 @@
+{
+  "name": "rWiFi32",
+  "version": "1.0.0",
+  "description": "Библиотека для подключения к точке доступа WiFi с использованием только фреймворка ESP-IDF. Может использоваться и под Arduino вместо стандартной библиотеки WiFi.h",
+  "keywords": "wifi",
+  "authors":
+  [
+    {
+      "name": "Alexander Razzhivin",
+      "email": "kotyara12@yandex.ru",
+      "url": "https://kotyara12.ru"
+    }
+  ],
+  "license": "MIT",
+  "frameworks": ["arduino", "espidf"],
+  "platforms": ["espressif32"],
+  "dependencies": {"kotyara12/rLog" : "^1.2.0"}
+}
