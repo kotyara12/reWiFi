@@ -294,11 +294,14 @@ typedef struct {
   void* event_data;
 } wifiEvent_t;
 
-static xQueueHandle _network_event_queue;
-static TaskHandle_t _network_event_task_handle = NULL;
-
 #define NETWORK_EVENT_TASK_NAME "network_event"
 #define NETWORK_EVENT_TASK_PRIO ESP_TASKD_EVENT_PRIO - 1
+
+#ifdef CONFIG_WIFI_STATIC_ALLOCATION
+#define NETWORK_EVENT_STATIC_ALLOCATION CONFIG_WIFI_STATIC_ALLOCATION
+#else
+#define NETWORK_EVENT_STATIC_ALLOCATION 0
+#endif
 
 #ifdef CONFIG_ARDUINO_EVENT_RUNNING_CORE
 #define NETWORK_EVENT_RUNNING_CORE CONFIG_ARDUINO_EVENT_RUNNING_CORE
@@ -312,6 +315,8 @@ static TaskHandle_t _network_event_task_handle = NULL;
 #define NETWORK_EVENT_QUEUE_SIZE 32
 #endif
 
+#define NETWORK_EVENT_QUEUE_ITEM_SIZE sizeof(wifiEvent_t)
+
 #ifdef CONFIG_SYSTEM_EVENT_TASK_STACK_SIZE
 #define NETWORK_EVENT_TASK_STACK_SIZE CONFIG_SYSTEM_EVENT_TASK_STACK_SIZE
 #else
@@ -320,6 +325,17 @@ static TaskHandle_t _network_event_task_handle = NULL;
 
 #define CONFIG_WIFI_NVS_GROUP "wifi"
 #define CONFIG_WIFI_NVS_INDEX "index"
+
+static xQueueHandle _network_event_queue;
+static TaskHandle_t _network_event_task_handle = NULL;
+
+#if NETWORK_EVENT_STATIC_ALLOCATION
+StaticEventGroup_t _network_event_group_buffer;
+StaticQueue_t _network_event_queue_buffer;
+uint8_t _network_event_queue_storage[NETWORK_EVENT_QUEUE_SIZE * NETWORK_EVENT_QUEUE_ITEM_SIZE];
+StaticTask_t _network_event_task_buffer;
+StackType_t _network_event_task_stack[NETWORK_EVENT_TASK_STACK_SIZE];
+#endif // NETWORK_EVENT_STATIC_ALLOCATION
 
 uint8_t wifiGetMaxIndex()
 {
@@ -752,7 +768,12 @@ static void wifiEventCallback(void* arg, esp_event_base_t event_base, int32_t ev
 static bool wifiEventTaskStart()
 {
   if (!_network_event_group) {
-    _network_event_group = xEventGroupCreate();
+    
+    #if NETWORK_EVENT_STATIC_ALLOCATION
+      _network_event_group = xEventGroupCreateStatic(&_network_event_group_buffer);
+    #else
+      _network_event_group = xEventGroupCreate();
+    #endif // NETWORK_EVENT_STATIC_ALLOCATION
     if (!_network_event_group) {
       rlog_e(wifiTAG, "Error creating network events group!");
       return false;
@@ -761,7 +782,11 @@ static bool wifiEventTaskStart()
   };
 
   if (!_network_event_queue) {
-    _network_event_queue = xQueueCreate(NETWORK_EVENT_QUEUE_SIZE, sizeof(wifiEvent_t));
+    #if NETWORK_EVENT_STATIC_ALLOCATION
+      _network_event_queue = xQueueCreateStatic(NETWORK_EVENT_QUEUE_SIZE, NETWORK_EVENT_QUEUE_ITEM_SIZE, &(_network_event_queue_storage[0]), &_network_event_queue_buffer);
+    #else
+      _network_event_queue = xQueueCreate(NETWORK_EVENT_QUEUE_SIZE, NETWORK_EVENT_QUEUE_ITEM_SIZE);
+    #endif // NETWORK_EVENT_STATIC_ALLOCATION
     if (!_network_event_queue) {
       rlog_e(wifiTAG, "Error creating network events queue!");
       return false;
@@ -769,8 +794,14 @@ static bool wifiEventTaskStart()
   };
 
   if (!_network_event_task_handle) {
-    xTaskCreatePinnedToCore(wifiEventTask, NETWORK_EVENT_TASK_NAME, NETWORK_EVENT_TASK_STACK_SIZE, NULL, 
-      NETWORK_EVENT_TASK_PRIO, &_network_event_task_handle, NETWORK_EVENT_RUNNING_CORE);
+    #if NETWORK_EVENT_STATIC_ALLOCATION
+      _network_event_task_handle = xTaskCreateStaticPinnedToCore(
+        wifiEventTask, NETWORK_EVENT_TASK_NAME, NETWORK_EVENT_TASK_STACK_SIZE, NULL, 
+        NETWORK_EVENT_TASK_PRIO, _network_event_task_stack, &_network_event_task_buffer, NETWORK_EVENT_RUNNING_CORE); 
+    #else
+      xTaskCreatePinnedToCore(wifiEventTask, NETWORK_EVENT_TASK_NAME, NETWORK_EVENT_TASK_STACK_SIZE, NULL, 
+        NETWORK_EVENT_TASK_PRIO, &_network_event_task_handle, NETWORK_EVENT_RUNNING_CORE);
+    #endif // NETWORK_EVENT_STATIC_ALLOCATION
 
     if (!_network_event_task_handle) {
       rlog_e(wifiTAG, "Error starting network events task!");
