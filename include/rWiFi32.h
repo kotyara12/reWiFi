@@ -1,5 +1,6 @@
 /* 
-   Модуль для автоматического поддержания постоянного подключения к WiFi
+   EN: Module for automatically maintaining a constant connection to WiFi
+   RU: Модуль для автоматического поддержания постоянного подключения к WiFi
    --------------------------
    (с) 2020-2021 Разживин Александр | Razzhivin Alexander
    kotyara12@yandex.ru | https://kotyara12.ru | tg: @kotyara1971
