@@ -65,7 +65,7 @@ typedef void (*cbWiFiConnectionLost_t) (const uint8_t reason);
 
 void wifiSetCallback_ConnectionInit(cbWiFiConnectionInit_t cb);
 void wifiSetCallback_ConnectionCheck(cbWiFiConnectionCheck_t cb);
-void wifiSetCallback_ConnectionCompleted(cbWiFiConnectionCompleted_t cb);
+void wifiSetCallback_ConnectionCompleted(cbWiFiConnectionCompleted_t cb); 
 void wifiSetCallback_ConnectionAttemptFailed(cbWiFiConnectionAttemptFailed_t cb);
 void wifiSetCallback_ConnectionAttemptsExceeded(cbWiFiConnectionAttemptsExceeded_t cb);
 void wifiSetCallback_ConnectionLost(cbWiFiConnectionLost_t cb);
