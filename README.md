@@ -1,6 +1,6 @@
 # reWiFi for ESP32 / ESP-IDF
 
-A library for connecting to a WiFi hotspot using only the ESP-IDF framework. Can also be used under Arduino instead of the standard WiFi.h library
+A library for connecting to a WiFi hotspot using only the ESP-IDF framework.
 
 ## Dependencies:
   - https://github.com/kotyara12/rLog
