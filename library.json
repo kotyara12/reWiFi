@@ -1,7 +1,7 @@
 {
-  "name": "rWiFi32",
-  "version": "1.0.0",
-  "description": "Библиотека для подключения к точке доступа WiFi с использованием только фреймворка ESP-IDF. Может использоваться и под Arduino вместо стандартной библиотеки WiFi.h",
+  "name": "reWiFi",
+  "version": "1.2.0",
+  "description": "A library for connecting to a WiFi hotspot using only the ESP-IDF framework. Can also be used under Arduino instead of the standard WiFi.h library",
   "keywords": "wifi",
   "authors":
   [

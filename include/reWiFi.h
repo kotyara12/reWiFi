@@ -6,8 +6,8 @@
    kotyara12@yandex.ru | https://kotyara12.ru | tg: @kotyara1971
 */
 
-#ifndef RWIFI32_H_
-#define RWIFI32_H_ 
+#ifndef __RE_WIFI_H__
+#define __RE_WIFI_H__ 
 
 #ifdef __cplusplus
 extern "C" {
@@ -92,4 +92,4 @@ ip_addr_t wifiHostByName(const char* aHostname);
 }
 #endif
 
-#endif // RWIFI32_H_
+#endif // __RE_WIFI_H__

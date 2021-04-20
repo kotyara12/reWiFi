@@ -7,10 +7,10 @@
 
 #include "rLog.h"
 #include "rTypes.h"
-#include "rWiFi32.h"
-#include "rLedSys32.h"
-#include "rEsp32.h"
-#include "rNvs32.h"
+#include "reWiFi.h"
+#include "reEsp32.h"
+#include "reNvs.h"
+#include "reLedSys.h"
 #include "project_config.h"
 #include <cstring>
 #include "esp_wifi.h"
