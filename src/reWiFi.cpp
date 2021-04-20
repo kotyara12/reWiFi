@@ -30,7 +30,7 @@
 #include "esp_sntp.h"
 #endif // #include "lwip/apps/sntp.h"
 #if CONFIG_TELEGRAM_ENABLE
-#include "rTgSend32.h"
+#include "reTgSend.h"
 #endif // CONFIG_TELEGRAM_ENABLE
 
 static const char * wifiTAG = "WiFi";
