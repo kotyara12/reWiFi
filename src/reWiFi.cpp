@@ -1,5 +1,6 @@
 /* 
-   Модуль для автоматического поддержания постоянного подключения к WiFi в режиме STA
+   EN: Module for automatically maintaining a constant connection to WiFi in STA mode
+   RU: Модуль для автоматического поддержания постоянного подключения к WiFi в режиме STA
    --------------------------
    (с) 2020-2021 Разживин Александр | Razzhivin Alexander
    kotyara12@yandex.ru | https://kotyara12.ru | tg: @kotyara1971
@@ -704,6 +705,7 @@ static void wifiEventTask(void * arg)
       };
       // OTHER (UNSUPPORTED)
     } else {
+      // Timeout for waiting for an event from the queue
       if (wifiStatus() >= wifiConnectInit) {
         if (_cbWiFi_Check) {
           // Periodic check of Internet availability
@@ -741,7 +743,7 @@ static void wifiEventTask(void * arg)
           };
         };
       } else {
-        // Timeout for waiting for an event from the queue (hung on the connection)
+        // Hung on connection
         if (_cbWiFi_AttemptFailed) { _cbWiFi_AttemptFailed(tryConnect, WIFI_REASON_UNSPECIFIED); };
         nextTryConnect();
       };
@@ -924,12 +926,12 @@ static bool _esp_wifi_started = false;
 
 static bool espWiFiStart()
 {
-  // Если уже запущено - выходим
+  // If it's already running, exit
   if(_esp_wifi_started) {
     return true;
   };
 
-  // Запускаем WiFi
+  // Launch WiFi
   esp_err_t err = esp_wifi_start();
   if (err != ESP_OK) {
     rlog_e(wifiTAG, "Error esp_wifi_start: %d", err);

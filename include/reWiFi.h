@@ -42,25 +42,25 @@ typedef enum {
 
 #define WIFI_REASON_PING_FAILED 0xFF
 
-// Функции обратного вызова для отработки реакции на события
+// Callback functions for handling event responses
 
-// cbWiFiConnectionInit_t - соединение с WiFi-AP установлено, 
-// но еще не завершены все внутренние процедуры (синхронизация с SNTP, например)
+// cbWiFiConnectionInit_t - connection with WiFi-AP is established,
+// but not yet completed all internal procedures (synchronization with SNTP, for example)
 typedef void (*cbWiFiConnectionInit_t) (const bool isFirstConnect);
-// cbWiFiConnectionCheck_t - для проверки доступа к сети интернет, например с помощью ping
-// (подключение к AP есть, но доступ в интернет при этом может отсутствовать)
+// cbWiFiConnectionCheck_t - to check access to the Internet, for example, using ping 
+// (there is a connection to the AP, but there may be no Internet access)
 typedef bool (*cbWiFiConnectionCheck_t) (const bool isConnect, TickType_t *nextCheckTimeout);
-// cbWiFiConnectionСompleted_t - соединение с WiFi установлено, проверено, время SNTP получено,
-// можно запускать зависимые от интернета задачи (MQTT, TS, TG и т.д.)
+// cbWiFiConnectionСompleted_t - WiFi connection established, verified, SNTP time received, 
+// internet dependent tasks can be run (MQTT, TS, TG, etc.)
 typedef void (*cbWiFiConnectionCompleted_t) (const bool isFirstConnect);
-// cbWiFiConnectionAttemptFailed_t - вызывается при очередной неудачной попытке подключения к WiFi
-// (можно записать сообщение в LOG или отправить SMS через SIM800)
+// cbWiFiConnectionAttemptFailed_t - called when another unsuccessful attempt to connect to WiFi 
+// (you can write a message to LOG or send SMS via SIM800)
 typedef void (*cbWiFiConnectionAttemptFailed_t) (const uint16_t tryAttempt, const uint8_t reason);
-// cbWiFiConnectionAttemptsExceeded_t - вызывается при исчерпании количества попыток подключения к WiFi
-// (можно перегрузить ESP или отправить SMS через SIM800)
+// cbWiFiConnectionAttemptsExceeded_t - called when the number of attempts to connect to WiFi is exhausted
+// (you can write a message to LOG or send SMS via SIM800)
 typedef void (*cbWiFiConnectionAttemptsExceeded_t) ();
-// cbWiFiConnectionLost_t - вызывается при потере подключения к WiFi
-// ("упала" точка доступа, или пропал доступ в интернет)
+// cbWiFiConnectionLost_t - is called when the connection to WiFi is lost 
+// (the access point "dropped", or the Internet access is lost)
 typedef void (*cbWiFiConnectionLost_t) (const uint8_t reason);
 
 void wifiSetCallback_ConnectionInit(cbWiFiConnectionInit_t cb);
