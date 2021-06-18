@@ -463,20 +463,33 @@ void wifiDoInternetUnavailable()
   if (_cbWiFi_Lost) { _cbWiFi_Lost(WIFI_REASON_PING_FAILED); };
 }
 
+void wifiDoGatewayUnavailable()
+{
+  rlog_e(wifiTAG, "Lost access to gateway!");
+
+  // Stop synchronizing time
+  sntpStopSNTP();
+
+  clearStatusBits(INET_AVAILABLE_BIT | STA_HAS_IP_BIT | STA_CONNECTED_BIT);
+  setStatus(wifiConnectInit);
+  ledSysStateClear(SYSLED_WIFI_CONNECTED | SYSLED_WIFI_INET_AVAILABLE, false);
+
+  // Calling the callback function when the connection is lost
+  if (_cbWiFi_Lost) { _cbWiFi_Lost(WIFI_REASON_PING_FAILED); };
+}
 
 static void wifiEventTask(void * arg) 
 {
   wifiEvent_t event;
   uint16_t tryConnect = 0;
   bool isFisrtConnect = true;
-  bool inetAvailable = false;
-  time_t lastInetLost = 0;
   TickType_t waitTimeout = portMAX_DELAY;
   #ifndef CONFIG_WIFI_SSID
   uint8_t wifiIndex = 1;
   uint8_t wifiMaxIndex = wifiGetMaxIndex();
   bool wifiIndexChanged = false;
   #endif // CONFIG_WIFI_SSID
+  wifiCheckResult_t inetStatus = wifiCheckOk;
 
   #define nextTryConnect() do { \
     tryConnect++; \
@@ -651,13 +664,13 @@ static void wifiEventTask(void * arg)
 
           // We check the availability of the Internet (ping, for example): the connection is established, but there may not be access to the Internet
           if (_cbWiFi_Check) {
-            while (!_cbWiFi_Check(true, &waitTimeout)) {
+            while (_cbWiFi_Check(true, &waitTimeout) != wifiCheckOk) {
               vTaskDelay(waitTimeout);
             };
           };
           
           // If we got here, we have Internet access, we get SNTP time
-          inetAvailable = true;
+          inetStatus = wifiCheckOk;
           if (wifiDoInternetAvailable(isFisrtConnect)) {
             isFisrtConnect = false;
             tryConnect = 0;
@@ -709,36 +722,32 @@ static void wifiEventTask(void * arg)
       if (wifiStatus() >= wifiConnectInit) {
         if (_cbWiFi_Check) {
           // Periodic check of Internet availability
-          inetAvailable = _cbWiFi_Check(false, &waitTimeout);
-          if ((inetAvailable && (lastInetLost != 0)) || (!inetAvailable && (lastInetLost == 0))) {
-            // If the status has changed, switch flags and status
-            if (inetAvailable) {
-              // Internet access restored
-              if (wifiDoInternetAvailable(false)) {
-                #if CONFIG_INTERNET_UNAVAILABLE_TG_NOTIFY
-                  time_t timeNow = time(nullptr);
-                  time_t timeLoss = timeNow - lastInetLost;
-                  uint16_t h = timeLoss / 3600;
-                  uint16_t m = timeLoss % 3600 / 60;
-                  uint16_t s = timeLoss % 3600 % 60;
-                  tgSend(true, CONFIG_TELEGRAM_DEVICE, CONFIG_MESSAGE_TG_INET_AVAILABLE, h, m, s);
-                #endif // CONFIG_INTERNET_UNAVAILABLE_TG_NOTIFY
-                lastInetLost = 0;
-              } else {
-                ledSysStateSet(SYSLED_WIFI_ERROR, false);
-                // Calling the callback function on unsuccessful connection attempt
-                if (_cbWiFi_AttemptFailed) { _cbWiFi_AttemptFailed(tryConnect, WIFI_REASON_UNSPECIFIED); };
-                // Next connection attempt
+          wifiCheckResult_t inetNewStatus = _cbWiFi_Check(false, &waitTimeout);
+          // If the status has been changed...
+          if (inetNewStatus != inetStatus) {
+            inetStatus = inetNewStatus;
+            switch (inetStatus) {
+              // All is well with network access, you can continue
+              case wifiCheckOk:
+                if (!wifiDoInternetAvailable(false)) {
+                  ledSysStateSet(SYSLED_WIFI_ERROR, false);
+                  // Calling the callback function on unsuccessful connection attempt
+                  if (_cbWiFi_AttemptFailed) { _cbWiFi_AttemptFailed(tryConnect, WIFI_REASON_UNSPECIFIED); };
+                  // Next connection attempt
+                  nextTryConnect();
+                };              
+                break;
+
+              // Internet is not available, network processes need to be suspended
+              case wifiCheckFailed:
+                wifiDoInternetUnavailable();
+                break;
+
+              // Gateway is not available, you need to reconnect
+              case wifiCheckBadGateway:
+                wifiDoGatewayUnavailable();
                 nextTryConnect();
-              };              
-            }
-            else {
-              // Internet access lost
-              lastInetLost = time(nullptr);
-              #if CONFIG_INTERNET_UNAVAILABLE_TG_NOTIFY
-                tgSend(true, CONFIG_TELEGRAM_DEVICE, CONFIG_MESSAGE_TG_INET_UNAVAILABLE);
-              #endif // CONFIG_INTERNET_UNAVAILABLE_TG_NOTIFY
-              wifiDoInternetUnavailable();
+                break;
             };
           };
         };

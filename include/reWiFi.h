@@ -38,7 +38,13 @@ typedef enum {
   wifiConnectInit  = 5, 
   wifiConnectSNTP  = 6, 
   wifiConnected    = 7
-} wifiState_t; 
+} wifiState_t;
+
+typedef enum {
+  wifiCheckOk      = 0,
+  wifiCheckFailed  = 1,
+  wifiCheckBadGateway = 2
+} wifiCheckResult_t;  
 
 #define WIFI_REASON_PING_FAILED 0xFF
 
@@ -49,7 +55,7 @@ typedef enum {
 typedef void (*cbWiFiConnectionInit_t) (const bool isFirstConnect);
 // cbWiFiConnectionCheck_t - to check access to the Internet, for example, using ping 
 // (there is a connection to the AP, but there may be no Internet access)
-typedef bool (*cbWiFiConnectionCheck_t) (const bool isConnect, TickType_t *nextCheckTimeout);
+typedef wifiCheckResult_t (*cbWiFiConnectionCheck_t) (const bool isConnect, TickType_t *nextCheckTimeout);
 // cbWiFiConnectionСompleted_t - WiFi connection established, verified, SNTP time received, 
 // internet dependent tasks can be run (MQTT, TS, TG, etc.)
 typedef void (*cbWiFiConnectionCompleted_t) (const bool isFirstConnect);
