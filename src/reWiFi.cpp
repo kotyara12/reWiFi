@@ -175,7 +175,7 @@ int waitStatusBits (int bits, uint32_t timeout_ms)
 
 bool wifiWaitConnection(const uint32_t timeout_ms)
 {
-  return waitStatusBits(STA_CONNECTED_BIT && INET_AVAILABLE_BIT, timeout_ms) > 0;
+  return waitStatusBits(STA_CONNECTED_BIT && STA_HAS_IP_BIT && INET_AVAILABLE_BIT, timeout_ms) > 0;
 }
 
 // -----------------------------------------------------------------------------------------------------------------------
@@ -475,7 +475,7 @@ void wifiDoGatewayUnavailable()
   ledSysStateClear(SYSLED_WIFI_CONNECTED | SYSLED_WIFI_INET_AVAILABLE, false);
 
   // Calling the callback function when the connection is lost
-  if (_cbWiFi_Lost) { _cbWiFi_Lost(WIFI_REASON_PING_FAILED); };
+  if (_cbWiFi_Lost) { _cbWiFi_Lost(WIFI_REASON_GATEWAY_FAILED); };
 }
 
 static void wifiEventTask(void * arg) 
@@ -490,6 +490,13 @@ static void wifiEventTask(void * arg)
   bool wifiIndexChanged = false;
   #endif // CONFIG_WIFI_SSID
   wifiCheckResult_t inetStatus = wifiCheckOk;
+
+  #define wifiIndexSetNext() do { \
+    wifiIndexChanged = true; \
+    if (++wifiIndex > wifiMaxIndex) wifiIndex = 1; \
+    rlog_w(wifiTAG, "Switching to another network # %d", wifiIndex); \
+    wifiSetConfig(wifiIndex); \
+  } while(0);
 
   #define nextTryConnect() do { \
     tryConnect++; \
@@ -624,9 +631,7 @@ static void wifiEventTask(void * arg)
            
             #ifndef CONFIG_WIFI_SSID
               // Multi-network mode
-              wifiIndexChanged = true;
-              if (++wifiIndex > wifiMaxIndex) wifiIndex = 1;
-              wifiSetConfig(wifiIndex);
+              wifiIndexSetNext();
             #endif // CONFIG_WIFI_SSID
 
             // Calling the callback function on unsuccessful connection attempt
@@ -664,13 +669,27 @@ static void wifiEventTask(void * arg)
 
           // We check the availability of the Internet (ping, for example): the connection is established, but there may not be access to the Internet
           if (_cbWiFi_Check) {
-            while (_cbWiFi_Check(true, &waitTimeout) != wifiCheckOk) {
+            inetStatus = _cbWiFi_Check(true, &waitTimeout);
+            // If the Internet is not available, we wait until it appears
+            while (inetStatus == wifiCheckFailed) {
               vTaskDelay(waitTimeout);
+              inetStatus = _cbWiFi_Check(true, &waitTimeout);
+            };
+            // The gateway does not ping, you need to reconnect
+            if (inetStatus != wifiCheckOk) {
+              ledSysStateSet(SYSLED_WIFI_ERROR, false);
+              // Calling the callback function on unsuccessful connection attempt
+              if (_cbWiFi_AttemptFailed) { _cbWiFi_AttemptFailed(tryConnect, WIFI_REASON_UNSPECIFIED); };
+              // Switching to another network in multi-mode
+              #ifndef CONFIG_WIFI_SSID
+                wifiIndexSetNext();
+              #endif // CONFIG_WIFI_SSID
+              // Next connection attempt
+              nextTryConnect();
             };
           };
           
           // If we got here, we have Internet access, we get SNTP time
-          inetStatus = wifiCheckOk;
           if (wifiDoInternetAvailable(isFisrtConnect)) {
             isFisrtConnect = false;
             tryConnect = 0;

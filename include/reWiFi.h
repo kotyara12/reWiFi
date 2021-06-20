@@ -46,6 +46,7 @@ typedef enum {
   wifiCheckBadGateway = 2
 } wifiCheckResult_t;  
 
+#define WIFI_REASON_GATEWAY_FAILED 0xFE
 #define WIFI_REASON_PING_FAILED 0xFF
 
 // Callback functions for handling event responses
