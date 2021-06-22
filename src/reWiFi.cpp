@@ -1210,21 +1210,29 @@ tcpip_adapter_ip_info_t wifiLocalIP()
 
 #endif // __WIFI_ADAPTER_NETIF__
 
-const char* wifiGetLocalIP()
+char* wifiGetLocalIP()
 {
   esp_netif_ip_info_t local_ip = wifiLocalIP();
-  uint8_t * loc_ip = (uint8_t*)&(local_ip.ip);
-  return malloc_stringf("%d.%d.%d.%d", loc_ip[0], loc_ip[1], loc_ip[2], loc_ip[3]);
+  if (local_ip.ip.addr != 0) {
+    uint8_t * loc_ip = (uint8_t*)&(local_ip.ip);
+    return malloc_stringf("%d.%d.%d.%d", loc_ip[0], loc_ip[1], loc_ip[2], loc_ip[3]);
+  } else {
+    return nullptr;
+  }
 }
 
 char* wifiGetGatewayIP()
 {
   esp_netif_ip_info_t local_ip = wifiLocalIP();
-  uint8_t * gw_ip = (uint8_t*)&(local_ip.gw);
-  return malloc_stringf("%d.%d.%d.%d", gw_ip[0], gw_ip[1], gw_ip[2], gw_ip[3]);
+  if (local_ip.ip.addr != 0) {
+    uint8_t * gw_ip = (uint8_t*)&(local_ip.gw);
+    return malloc_stringf("%d.%d.%d.%d", gw_ip[0], gw_ip[1], gw_ip[2], gw_ip[3]);
+  } else {
+    return nullptr;
+  };
 }
 
-char* wifiGetHostname()
+const char* wifiGetHostname()
 {
   const char* hostname = NULL;
   
