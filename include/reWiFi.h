@@ -92,8 +92,8 @@ esp_netif_ip_info_t wifiLocalIP();
 #else
 tcpip_adapter_ip_info_t wifiLocalIP();
 #endif // __WIFI_ADAPTER_NETIF__
-const char* wifiGetLocalIP();
-const char* wifiGetGatewayIP();
+char* wifiGetLocalIP();
+char* wifiGetGatewayIP();
 const char* wifiGetHostname();
 ip_addr_t wifiHostByName(const char* aHostname);
 

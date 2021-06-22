@@ -1217,14 +1217,14 @@ const char* wifiGetLocalIP()
   return malloc_stringf("%d.%d.%d.%d", loc_ip[0], loc_ip[1], loc_ip[2], loc_ip[3]);
 }
 
-const char* wifiGetGatewayIP()
+char* wifiGetGatewayIP()
 {
   esp_netif_ip_info_t local_ip = wifiLocalIP();
   uint8_t * gw_ip = (uint8_t*)&(local_ip.gw);
   return malloc_stringf("%d.%d.%d.%d", gw_ip[0], gw_ip[1], gw_ip[2], gw_ip[3]);
 }
 
-const char* wifiGetHostname()
+char* wifiGetHostname()
 {
   const char* hostname = NULL;
   
