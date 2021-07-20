@@ -26,11 +26,7 @@
 #include "lwip/dns.h"
 #include <time.h>
 #include <sys/time.h> 
-#if __has_include("lwip/apps/sntp.h")
-#include "lwip/apps/sntp.h"
-#else
 #include "esp_sntp.h"
-#endif // #include "lwip/apps/sntp.h"
 #if CONFIG_TELEGRAM_ENABLE
 #include "reTgSend.h"
 #endif // CONFIG_TELEGRAM_ENABLE
