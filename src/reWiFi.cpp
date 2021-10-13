@@ -17,6 +17,7 @@
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "project_config.h"
+#include "def_consts.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
