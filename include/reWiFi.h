@@ -30,7 +30,6 @@ bool wifiStart(wifi_mode_t mode);
 bool wifiStartSTA();
 bool wifiStartAP();
 bool wifiStop();
-bool wifiRestart();
 bool wifiFree();
 bool wifiIsConnected();
 
