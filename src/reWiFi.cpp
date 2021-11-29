@@ -29,12 +29,10 @@ static const char * wifiNvsIndex = "index";
 
 static const int _WIFI_TCPIP_INIT         = BIT0;
 static const int _WIFI_LOWLEVEL_INIT      = BIT1;
-static const int _WIFI_ENABLED            = BIT2;
-static const int _WIFI_RECONNECT          = BIT3;
-static const int _WIFI_STA_STARTED        = BIT4;
-static const int _WIFI_STA_CONNECTED      = BIT5;
-static const int _WIFI_STA_GOT_IP         = BIT6;
-static const int _WIFI_AP_STARTED         = BIT7;
+static const int _WIFI_STA_ENABLED        = BIT2;
+static const int _WIFI_STA_STARTED        = BIT3;
+static const int _WIFI_STA_CONNECTED      = BIT4;
+static const int _WIFI_STA_GOT_IP         = BIT5;
 
 static uint32_t _wifiAttemptCount = 0;
 static EventGroupHandle_t _wifiStatusBits = nullptr;
@@ -42,12 +40,20 @@ static esp_netif_t *_wifiNetif = nullptr;
 #ifndef CONFIG_WIFI_SSID
 static uint8_t _wifiMaxIndex = 0;
 static uint8_t _wifiCurrIndex = 0;
-static bool _wifiIndexChanged = false;
+static bool _wifiIndexNeedChange = false;
+static bool _wifiIndexWasChanged = false;
 #endif // CONFIG_WIFI_SSID
 
 #if CONFIG_WIFI_STATIC_ALLOCATION
 StaticEventGroup_t _wifiStatusBitsBuffer;
 #endif // CONFIG_WIFI_STATIC_ALLOCATION
+
+#define WIFI_ERROR_CHECK_LOG(x, msg) do {                                               \
+  esp_err_t __err_rc = (x);                                                             \
+  if (__err_rc != ESP_OK) {                                                             \
+    rlog_e(logTAG, "Failed to %s: %d (%s)", msg, __err_rc, esp_err_to_name(__err_rc) ); \
+  };                                                                                    \
+} while(0)
 
 #define WIFI_ERROR_CHECK_BOOL(x, msg) do {                                              \
   esp_err_t __err_rc = (x);                                                             \
@@ -114,7 +120,7 @@ bool wifiStatusCheck(const EventBits_t bits, const bool clearOnExit)
 
 bool wifiIsEnabled()
 {
-  return wifiStatusCheck(_WIFI_ENABLED, false);
+  return wifiStatusCheck(_WIFI_STA_ENABLED, false);
 }
 
 bool wifiIsConnected()
@@ -136,61 +142,17 @@ EventBits_t wifiStatusWait(const EventBits_t bits, const BaseType_t clearOnExit,
 }
 
 // -----------------------------------------------------------------------------------------------------------------------
-// ------------------------------------------------------- WiFi mode -----------------------------------------------------
-// -----------------------------------------------------------------------------------------------------------------------
-
-wifi_mode_t wifiMode()
-{
-  if(!wifiStatusCheck(_WIFI_LOWLEVEL_INIT, false)) {
-    return WIFI_MODE_NULL;
-  };
-
-  wifi_mode_t mode;
-  if (esp_wifi_get_mode(&mode) == ESP_ERR_WIFI_NOT_INIT) {
-    rlog_w(logTAG, "WiFi not started!");
-    return WIFI_MODE_NULL;
-  };
-
-  return mode;
-}
-
-bool wifiSetMode(wifi_mode_t newMode)
-{
-  if (wifiStatusCheck(_WIFI_LOWLEVEL_INIT, false)) {
-    rlog_v(logTAG, "Set WiFi mode: %d, previous mode: %d...", newMode, wifiMode());
-
-    // Checking current mode
-    if (wifiMode() == newMode) {
-      return true;
-    };
-
-    // Installing a new mode
-    WIFI_ERROR_CHECK_BOOL(esp_wifi_set_mode(newMode), "set WiFi mode");
-
-    // Some new protocol???
-    #ifdef CONFIG_WIFI_LONG_RANGE
-      if (newMode & WIFI_MODE_STA) {
-        WIFI_ERROR_CHECK_BOOL(esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_LR), "set protocol");
-      };
-      if (newMode & WIFI_MODE_AP) {
-        WIFI_ERROR_CHECK_BOOL(esp_wifi_set_protocol(WIFI_IF_AP, WIFI_PROTOCOL_LR), "set protocol");
-      };
-    #endif // CONFIG_WIFI_LONG_RANGE
-
-    return true;
-  };
-  return newMode == WIFI_MODE_NULL;
-}
-
-// -----------------------------------------------------------------------------------------------------------------------
 // ----------------------------------------------- Low-level WiFi functions ----------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------
 
-static void wifiEventHandlerWiFi(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
-static void wifiEventHandlerIP(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
+static bool wifiRegisterEventHandlers();
+static void wifiUnregisterEventHandlers();
 #if CONFIG_PINGER_ENABLE
 static void wifiEventHandlerPing(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
 #endif // CONFIG_PINGER_ENABLE
+
+// Wi-Fi/LwIP Init Phase
+// https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/wifi.html#wi-fi-lwip-init-phase
 
 bool wifiTcpIpInit()
 {
@@ -216,7 +178,7 @@ bool wifiTcpIpInit()
   return wifiStatusSet(_WIFI_TCPIP_INIT);
 };
 
-bool wifiLowLevelInit(wifi_mode_t mode)
+bool wifiLowLevelInit()
 {
   if (!wifiStatusCheck(_WIFI_LOWLEVEL_INIT, false)) {
     rlog_d(logTAG, "WiFi low level initialization...");
@@ -235,17 +197,7 @@ bool wifiLowLevelInit(wifi_mode_t mode)
     };
 
     // Initializing netif
-    switch (mode) {
-      case WIFI_MODE_STA:
-        _wifiNetif = esp_netif_create_default_wifi_sta();
-        break;
-      case WIFI_MODE_AP:
-        _wifiNetif = esp_netif_create_default_wifi_ap();
-        break;
-      default:
-        rlog_e(logTAG, "Mode is not supported!");
-        return false;
-    };
+    _wifiNetif = esp_netif_create_default_wifi_sta();
 
     // WiFi initialization with default parameters
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
@@ -263,20 +215,15 @@ bool wifiLowLevelInit(wifi_mode_t mode)
     };
 
     // Set the storage type of the Wi-Fi configuration in memory
-    // WIFI_ERROR_CHECK_BOOL(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+    #ifdef CONFIG_WIFI_STORAGE
+      WIFI_ERROR_CHECK_BOOL(esp_wifi_set_storage(CONFIG_WIFI_STORAGE));
+    #endif // CONFIG_WIFI_STORAGE
 
-    // Register default event handlers
-    WIFI_ERROR_CHECK_BOOL(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifiEventHandlerWiFi, nullptr), "handler register");
-    WIFI_ERROR_CHECK_BOOL(esp_event_handler_register(IP_EVENT, ESP_EVENT_ANY_ID, &wifiEventHandlerIP, nullptr), "handler register");
-
-    // Register ping event handlers
-    #if CONFIG_PINGER_ENABLE
-    eventHandlerRegister(RE_PING_EVENTS, RE_PING_INET_AVAILABLE, &wifiEventHandlerPing, nullptr);
-    eventHandlerRegister(RE_PING_EVENTS, RE_PING_INET_UNAVAILABLE, &wifiEventHandlerPing, nullptr);
-    #endif // CONFIG_PINGER_ENABLE
-
-    // Set initialization bit
-    return wifiStatusSet(_WIFI_LOWLEVEL_INIT);
+    // Register event handlers
+    if (wifiRegisterEventHandlers()) {
+      // Set initialization bit
+      return wifiStatusSet(_WIFI_LOWLEVEL_INIT);
+    };
   };
   return false;
 }
@@ -286,15 +233,11 @@ bool wifiLowLevelDeinit()
   if (wifiStatusCheck(_WIFI_LOWLEVEL_INIT, false)) {
     rlog_d(logTAG, "WiFi low level finalization");
 
-    // Unregister default event handlers
-    WIFI_ERROR_CHECK_BOOL(esp_event_handler_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifiEventHandlerWiFi), "handler unregister");
-    WIFI_ERROR_CHECK_BOOL(esp_event_handler_unregister(IP_EVENT, ESP_EVENT_ANY_ID, &wifiEventHandlerIP), "handler unregister");
+    // Clear wifi mode
+    WIFI_ERROR_CHECK_BOOL(esp_wifi_set_mode(WIFI_MODE_NULL), "clear the WiFi operating mode");
 
-    // Unregister ping event handlers
-    #if CONFIG_PINGER_ENABLE
-    eventHandlerUnregister(RE_PING_EVENTS, RE_PING_INET_AVAILABLE, &wifiEventHandlerPing);
-    eventHandlerUnregister(RE_PING_EVENTS, RE_PING_INET_UNAVAILABLE, &wifiEventHandlerPing);
-    #endif // CONFIG_PINGER_ENABLE
+    // Unregister event handlers
+    wifiUnregisterEventHandlers();
 
     // We free up WiFi resources, we don’t tamper with the TCP-IP stack
     WIFI_ERROR_CHECK_BOOL(esp_wifi_deinit(), "WiFi deinit");
@@ -359,8 +302,11 @@ const char* wifiGetSSID()
   #endif // CONFIG_WIFI_SSID
 }
 
-bool wifiConnectSTA(bool changeIndex)
+bool wifiConnectSTA()
 {
+  // Wi-Fi Configuration Phase
+  // https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/wifi.html#wi-fi-configuration-phase
+
   wifi_config_t conf;
   memset(&conf, 0, sizeof(wifi_config_t));
   #ifdef CONFIG_WIFI_SSID
@@ -371,18 +317,21 @@ bool wifiConnectSTA(bool changeIndex)
     // Multi-network mode
     if (_wifiCurrIndex == 0) {
       _wifiMaxIndex = wifiGetMaxIndex();
+      _wifiIndexNeedChange = false;
+      _wifiIndexWasChanged = false;
       nvsRead(wifiNvsGroup, wifiNvsIndex, OPT_TYPE_U8, &_wifiCurrIndex);
       if (_wifiCurrIndex == 0) {
         _wifiCurrIndex = 1;
-        _wifiIndexChanged = true;
+        _wifiIndexNeedChange = true;
+        _wifiIndexWasChanged = true;
       };
     } else {
-      if (changeIndex) {
+      if (_wifiIndexNeedChange) {
         if (++_wifiCurrIndex > _wifiMaxIndex) {
           _wifiCurrIndex = 1;
         };
-        rlog_d(logTAG, "Select WiFi index: %d", _wifiCurrIndex);
-        _wifiIndexChanged = true;
+        rlog_d(logTAG, "Select new WiFi index: %d", _wifiCurrIndex);
+        wifiStatusSet(_wifiIndexWasChanged);
       };
     };
 
@@ -426,23 +375,30 @@ bool wifiConnectSTA(bool changeIndex)
   conf.sta.pmf_cfg.capable = true;
   conf.sta.pmf_cfg.required = false;
 
-  // Apply configuration
+  // Configure WiFi
+  WIFI_ERROR_CHECK_BOOL(esp_wifi_set_config(WIFI_IF_STA, &conf), "set the configuration of the ESP32 STA");
+  #ifdef CONFIG_WIFI_BANDWIDTH
+    // Theoretically the HT40 can gain better throughput because the maximum raw physicial 
+    // (PHY) data rate for HT40 is 150Mbps while it’s 72Mbps for HT20. 
+    // However, if the device is used in some special environment, e.g. there are too many other Wi-Fi devices around the ESP32 device, 
+    // the performance of HT40 may be degraded. So if the applications need to support same or similar scenarios, 
+    // it’s recommended that the bandwidth is always configured to HT20.
+    // https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/wifi.html#wi-fi-ht20-40
+    WIFI_ERROR_CHECK_BOOL(esp_wifi_set_bandwidth(WIFI_IF_STA, CONFIG_WIFI_BANDWIDTH), "set the bandwidth");
+  #endif // CONFIG_WIFI_BANDWIDTH
+  #ifdef CONFIG_WIFI_LONGRANGE
+    // Long Range (LR). Since LR is Espressif unique Wi-Fi mode, only ESP32 devices can transmit and receive the LR data
+    // more info: https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/wifi.html#wi-fi-protocol-mode
+    WIFI_ERROR_CHECK_BOOL(esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_LR), "set protocol Long Range");
+  #endif // CONFIG_WIFI_LONGRANGE
+
+  // Wi-Fi Connect Phase
+  // https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/wifi.html#wi-fi-connect-phase
   _wifiAttemptCount++;
   rlog_i(logTAG, "Connecting to WiFi network [ %s ]...", reinterpret_cast<char*>(conf.sta.ssid));
-  WIFI_ERROR_CHECK_BOOL(esp_wifi_set_config(WIFI_IF_STA, &conf), "set config");
-  WIFI_ERROR_CHECK_BOOL(esp_wifi_connect(), "WiFi connect");
+  WIFI_ERROR_CHECK_BOOL(esp_wifi_connect(), "сonnect the ESP32 WiFi station to the AP");
 
   return true;
-}
-
-// -----------------------------------------------------------------------------------------------------------------------
-// ---------------------------------------------------- Configure AP mode ------------------------------------------------
-// -----------------------------------------------------------------------------------------------------------------------
-
-bool wifiSetConfigAP()
-{
-  rlog_e(logTAG, "Sorry, but this has not been released yet :(");
-  return false;
 }
 
 // -----------------------------------------------------------------------------------------------------------------------
@@ -451,9 +407,10 @@ bool wifiSetConfigAP()
 
 bool wifiStartWiFi()
 {
-  if (!(wifiStatusCheck(_WIFI_STA_STARTED, false) || wifiStatusCheck(_WIFI_AP_STARTED, false))) {
+  if (!wifiStatusCheck(_WIFI_STA_STARTED, false)) {
     rlog_d(logTAG, "Start WiFi...");
-    WIFI_ERROR_CHECK_BOOL(esp_wifi_start(), "WiFi start");
+    WIFI_ERROR_CHECK_BOOL(esp_wifi_set_mode(WIFI_MODE_STA), "set the WiFi operating mode");
+    WIFI_ERROR_CHECK_BOOL(esp_wifi_start(), "start WiFi");
   };
   return true;
 };
@@ -464,7 +421,7 @@ bool wifiStopWiFi()
     rlog_d(logTAG, "Disconnect from AP...");
     WIFI_ERROR_CHECK_BOOL(esp_wifi_disconnect(), "WiFi disconnect");
   } else {
-    if (wifiStatusCheck(_WIFI_STA_STARTED, false) || wifiStatusCheck(_WIFI_AP_STARTED, false)) {
+    if (wifiStatusCheck(_WIFI_STA_STARTED, false)) {
       rlog_d(logTAG, "Stop WiFi mode...");
       WIFI_ERROR_CHECK_BOOL(esp_wifi_stop(), "WiFi stop");
     };
@@ -472,138 +429,163 @@ bool wifiStopWiFi()
   return true;
 }
 
-bool wifiReconnectSTA(bool forcedReconnect, bool changeIndex)
+bool wifiResetWiFi()
+{
+  rlog_w(logTAG, "Restore WiFi stack persistent settings to default values!");
+  WIFI_ERROR_CHECK_BOOL(esp_wifi_restore(), "restore WiFi stack persistent settings to default values");
+  return true;
+}
+
+bool wifiReconnectSTA()
 {
   if (wifiIsEnabled()) {
-    if (forcedReconnect || (_wifiAttemptCount >= CONFIG_WIFI_CONNECT_ATTEMPTS)) {
-      // In order not to cause an endless loop, transfer control to restart "itself" to another process
-      wifiStatusSet(_WIFI_RECONNECT);
-      return wifiStopWiFi();
-    }
-    else {
-      return wifiConnectSTA(changeIndex);
+    if (_wifiAttemptCount > CONFIG_WIFI_RESTART_ATTEMPTS) {
+      return wifiResetWiFi();
+    } else {
+      if (_wifiAttemptCount > CONFIG_WIFI_RECONNECT_ATTEMPTS) {
+        _wifiIndexNeedChange = true;
+      };
+      if (!_wifiIndexNeedChange) {
+        vTaskDelay(pdMS_TO_TICKS(CONFIG_WIFI_RECONNECT_DELAY));
+      };
+      return wifiConnectSTA();
     };
   };
   return false;
 }
 
-
 // -----------------------------------------------------------------------------------------------------------------------
-// -------------------------------------------------- WiFi event handler -------------------------------------------------
+// ------------------------------------------------- WiFi event handlers -------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------
 
-static void wifiEventHandlerWiFi(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
+static void wifiEventHandler_Start(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
 {
-  // STA started
-  if (event_id == WIFI_EVENT_STA_START) {
-    _wifiAttemptCount = 0;
-    wifiStatusSet(_WIFI_ENABLED | _WIFI_STA_STARTED);
-    wifiStatusClear(_WIFI_STA_CONNECTED | _WIFI_STA_GOT_IP);
-    eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_STARTED, nullptr, 0, portMAX_DELAY);  
-    rlog_i(logTAG, "WiFi STA started");
-    wifiConnectSTA(false);
-  } 
+  // Set status bits
+  wifiStatusSet(_WIFI_STA_ENABLED | _WIFI_STA_STARTED);
+  wifiStatusClear(_WIFI_STA_CONNECTED | _WIFI_STA_GOT_IP);
+  // Reset attempts count
+  _wifiAttemptCount = 0;
+  // Re-dispatch event to another loop
+  eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_STARTED, nullptr, 0, portMAX_DELAY);  
+  // Log
+  rlog_i(logTAG, "WiFi STA started");
+  // Start connection
+  wifiConnectSTA();
+}
 
-  // STA connected
-  else if (event_id == WIFI_EVENT_STA_CONNECTED) {
+static void wifiEventHandler_Connect(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
+{
+  // Set status bits
+  wifiStatusSet(_WIFI_STA_CONNECTED);
+  wifiStatusClear(_WIFI_STA_GOT_IP);
+  // Save successful connection number
+  #ifndef CONFIG_WIFI_SSID
+    _wifiIndexNeedChange = false;
+    if (_wifiIndexWasChanged) {
+      nvsWrite(wifiNvsGroup, wifiNvsIndex, OPT_TYPE_U8, &_wifiCurrIndex);
+      _wifiIndexWasChanged = false;
+    };
+  #endif // CONFIG_WIFI_SSID
+  // Log
+  #if CONFIG_RLOG_PROJECT_LEVEL >= RLOG_LEVEL_INFO
     wifi_event_sta_connected_t * data = (wifi_event_sta_connected_t*)event_data;
-    wifiStatusSet(_WIFI_STA_CONNECTED);
-    wifiStatusClear(_WIFI_RECONNECT | _WIFI_STA_GOT_IP);
     rlog_i(logTAG, "WiFi connection [ %s ] established, RSSI: %d dBi", (char*)data->ssid, wifiRSSI());
-    #ifndef CONFIG_WIFI_SSID
-      if (_wifiIndexChanged) {
-        nvsWrite(wifiNvsGroup, wifiNvsIndex, OPT_TYPE_U8, &_wifiCurrIndex);
-      };
-    #endif // CONFIG_WIFI_SSID
-  }
+  #endif
+}
 
-  // STA disconnected
-  else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
-    EventBits_t prevStatusBits = wifiStatusGet();
-    wifi_event_sta_disconnected_t * data = (wifi_event_sta_disconnected_t*)event_data;
-    wifiStatusClear(_WIFI_STA_CONNECTED | _WIFI_STA_GOT_IP);
-    if (wifiStatusCheck(_WIFI_ENABLED, false)) {
-      if (((prevStatusBits & _WIFI_STA_CONNECTED) == _WIFI_STA_CONNECTED)
-       && ((prevStatusBits & (_WIFI_STA_GOT_IP))==(_WIFI_STA_GOT_IP))) {
-        rlog_e(logTAG, "WiFi connection [ %s ] lost: %d!", wifiGetSSID(), data->reason);
+static void wifiEventHandler_Disconnect(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
+{
+  // Check current status
+  EventBits_t prevStatusBits = wifiStatusGet();
+  bool isWasConnected = (prevStatusBits & _WIFI_STA_CONNECTED) == _WIFI_STA_CONNECTED;
+  bool isWasIP = (prevStatusBits & _WIFI_STA_GOT_IP) == _WIFI_STA_GOT_IP;
+  // Reset status bits
+  wifiStatusClear(_WIFI_STA_CONNECTED | _WIFI_STA_GOT_IP);
+  // Check for forced (manual) WiFi disconnection
+  if (wifiStatusCheck(_WIFI_STA_ENABLED, false)) {
+    // Different reconnection scenarios
+    if (event_id == WIFI_EVENT_STA_BEACON_TIMEOUT) {
+      if (isWasConnected && isWasIP) {
+        // Re-dispatch event to another loop
+        eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_DISCONNECTED, nullptr, 0, portMAX_DELAY);  
+        // Log
+        rlog_e(logTAG, "WiFi connection [ %s ] lost: beacon timeout!", wifiGetSSID());
+        // Reconnect
+        wifiReconnectSTA();
+      } else {
+        rlog_e(logTAG, "Failed to connect to WiFi network: beacon timeout!");
+        // Next connection attempt
+        wifiReconnectSTA();
+      };
+    } else if (event_id == IP_EVENT_STA_LOST_IP) {
+      // Re-dispatch event to another loop
+      eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_DISCONNECTED, nullptr, 0, portMAX_DELAY);
+      // Log
+      rlog_e(logTAG, "WiFi connection [ %s ] lost WiFi IP address!", wifiGetSSID());
+      // Reconnect
+      wifiReconnectSTA();
+    } else {
+      wifi_event_sta_disconnected_t * data = (wifi_event_sta_disconnected_t*)event_data;
+      if (isWasConnected && isWasIP) {
+        // Re-dispatch event to another loop
         eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_DISCONNECTED, data, sizeof(wifi_event_sta_disconnected_t), portMAX_DELAY);  
-        wifiReconnectSTA(true, false);
+        // Log
+        rlog_e(logTAG, "WiFi connection [ %s ] lost: #%d!", wifiGetSSID(), data->reason);
+        // Reconnect
+        wifiReconnectSTA();
       } else {
         rlog_e(logTAG, "Failed to connect to WiFi network: #%d!", data->reason);
-        wifiReconnectSTA(false, true);
+        // Next connection attempt
+        if (data->reason == WIFI_REASON_NO_AP_FOUND) {
+          _wifiIndexNeedChange = true;
+        };
+        wifiReconnectSTA();
       };
-    } else {
-      wifiStopWiFi();
     };
+  } else {
+    // Stop WiFi
+    wifiStopWiFi();
   }
+}
 
-  // STA beacon timeout
-  else if (event_id == WIFI_EVENT_STA_BEACON_TIMEOUT) {
-    wifiStatusClear(_WIFI_STA_CONNECTED | _WIFI_STA_GOT_IP);
-    rlog_e(logTAG, "WiFi connection [ %s ] lost: beacon timeout", wifiGetSSID());
-    eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_DISCONNECTED, nullptr, 0, portMAX_DELAY);  
-    if (wifiStatusCheck(_WIFI_ENABLED, false)) {
-      wifiReconnectSTA(false, true);
-    } else {
-      wifiStopWiFi();
-    };
-  }
-
-  // STA stopped
-  else if (event_id == WIFI_EVENT_STA_STOP) {
-    wifiStatusClear(_WIFI_STA_STARTED | _WIFI_STA_CONNECTED | _WIFI_STA_GOT_IP);
-    rlog_w(logTAG, "WiFi STA stopped");
-    eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_STOPPED, nullptr, 0, portMAX_DELAY);  
-    if (wifiStatusCheck(_WIFI_ENABLED, false)) {
-      wifiStartWiFi();
-    } else {
-      wifiSetMode(WIFI_MODE_NULL);
-      wifiLowLevelDeinit();
-    };
-  }
-
-  // Other
-  else {
-    rlog_d(logTAG, "Unsupported event type: %d", event_id);
+static void wifiEventHandler_Stop(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
+{
+  // Reset status bits
+  wifiStatusClear(_WIFI_STA_STARTED | _WIFI_STA_CONNECTED | _WIFI_STA_GOT_IP);
+  // Re-dispatch event to another loop
+  eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_STOPPED, nullptr, 0, portMAX_DELAY);  
+  // Log
+  rlog_w(logTAG, "WiFi STA stopped");
+  // If WiFi is enabled, restart it
+  if (wifiStatusCheck(_WIFI_STA_ENABLED, false)) {
+    wifiStartWiFi();
+  // ... otherwise we turn off everything
+  } else {
+    wifiLowLevelDeinit();
   };
 }
 
-static void wifiEventHandlerIP(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
+static void wifiEventHandler_GotIP(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
 {
-  // Received IP address
-  if (event_id == IP_EVENT_STA_GOT_IP) {
-    _wifiAttemptCount = 0;
-    ip_event_got_ip_t * data = (ip_event_got_ip_t*)event_data;
+  // Set status bits
+  wifiStatusSet(_WIFI_STA_GOT_IP);
+  // Reset attempts count
+  _wifiAttemptCount = 0;
+  // Re-dispatch event to another loop
+  ip_event_got_ip_t * data = (ip_event_got_ip_t*)event_data;
+  eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_GOT_IP, data, sizeof(ip_event_got_ip_t), portMAX_DELAY);  
+  // Log
+  #if CONFIG_RLOG_PROJECT_LEVEL >= RLOG_LEVEL_INFO
     uint8_t * ip = (uint8_t*)&(data->ip_info.ip.addr);
     uint8_t * mask = (uint8_t*)&(data->ip_info.netmask.addr);
     uint8_t * gw = (uint8_t*)&(data->ip_info.gw.addr);
-    wifiStatusSet(_WIFI_STA_GOT_IP);
-    eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_GOT_IP, data, sizeof(ip_event_got_ip_t), portMAX_DELAY);  
     rlog_i(logTAG, "Got IP-address: %d.%d.%d.%d, mask: %d.%d.%d.%d, gateway: %d.%d.%d.%d",
         ip[0], ip[1], ip[2], ip[3], mask[0], mask[1], mask[2], mask[3], gw[0], gw[1], gw[2], gw[3]);
-    #if !CONFIG_PINGER_ENABLE
-      // If PINGER service is not available, send an event that the Internet is available immediately
-      eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_PING_OK, nullptr, 0, portMAX_DELAY);  
-    #endif // CONFIG_PINGER_ENABLE
-  } 
-
-  // Lost IP address
-  else if (event_id == IP_EVENT_STA_LOST_IP) {
-    if (wifiIsConnected()) {
-      rlog_e(logTAG, "Lost WiFi IP address!");
-      wifiStatusClear(_WIFI_STA_GOT_IP);
-      if (wifiIsEnabled()) {
-        wifiReconnectSTA(true, false);
-      } else {
-        wifiStopWiFi();
-      };
-    };
-  }
-
-  // Other
-  else {
-    rlog_d(logTAG, "Unsupported event type: %d", event_id);
-  };
+  #endif
+  #if !CONFIG_PINGER_ENABLE
+    // If PINGER service is not available, send an event that the Internet is available immediately
+    eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_PING_OK, nullptr, 0, portMAX_DELAY);  
+  #endif // CONFIG_PINGER_ENABLE
 }
 
 #if CONFIG_PINGER_ENABLE
@@ -629,6 +611,70 @@ static void wifiEventHandlerPing(void* arg, esp_event_base_t event_base, int32_t
 }
 #endif // CONFIG_PINGER_ENABLE
 
+static bool wifiRegisterEventHandlers()
+{
+  WIFI_ERROR_CHECK_BOOL(
+    esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_START, &wifiEventHandler_Start, nullptr), 
+    "register an event handler for WIFI_EVENT_STA_START");
+  WIFI_ERROR_CHECK_BOOL(
+    esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_CONNECTED, &wifiEventHandler_Connect, nullptr), 
+    "register an event handler for WIFI_EVENT_STA_CONNECTED");
+  WIFI_ERROR_CHECK_BOOL(
+    esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &wifiEventHandler_Disconnect, nullptr), 
+    "register an event handler for WIFI_EVENT_STA_DISCONNECTED");
+  WIFI_ERROR_CHECK_BOOL(
+    esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_BEACON_TIMEOUT, &wifiEventHandler_Disconnect, nullptr), 
+    "register an event handler for WIFI_EVENT_STA_BEACON_TIMEOUT");
+  WIFI_ERROR_CHECK_BOOL(
+    esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_STOP, &wifiEventHandler_Stop, nullptr), 
+    "register an event handler for WIFI_EVENT_STA_STOP");
+  WIFI_ERROR_CHECK_BOOL(
+    esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifiEventHandler_GotIP, nullptr), 
+    "register an event handler for IP_EVENT_STA_GOT_IP");
+  WIFI_ERROR_CHECK_BOOL(
+    esp_event_handler_register(IP_EVENT, IP_EVENT_STA_LOST_IP, &wifiEventHandler_Disconnect, nullptr), 
+    "register an event handler for IP_EVENT_STA_LOST_IP");
+
+  // Register ping event handlers
+  #if CONFIG_PINGER_ENABLE
+    eventHandlerRegister(RE_PING_EVENTS, RE_PING_INET_AVAILABLE, &wifiEventHandlerPing, nullptr);
+    eventHandlerRegister(RE_PING_EVENTS, RE_PING_INET_UNAVAILABLE, &wifiEventHandlerPing, nullptr);
+  #endif // CONFIG_PINGER_ENABLE
+
+  return true;
+}
+
+static void wifiUnregisterEventHandlers()
+{
+  WIFI_ERROR_CHECK_LOG(
+    esp_event_handler_unregister(WIFI_EVENT, WIFI_EVENT_STA_START, &wifiEventHandler_Start), 
+    "unregister an event handler for WIFI_EVENT_STA_START");
+  WIFI_ERROR_CHECK_LOG(
+    esp_event_handler_unregister(WIFI_EVENT, WIFI_EVENT_STA_CONNECTED, &wifiEventHandler_Connect), 
+    "unregister an event handler for WIFI_EVENT_STA_CONNECTED");
+  WIFI_ERROR_CHECK_LOG(
+    esp_event_handler_unregister(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &wifiEventHandler_Disconnect), 
+    "unregister an event handler for WIFI_EVENT_STA_DISCONNECTED");
+  WIFI_ERROR_CHECK_LOG(
+    esp_event_handler_unregister(WIFI_EVENT, WIFI_EVENT_STA_BEACON_TIMEOUT, &wifiEventHandler_Disconnect), 
+    "unregister an event handler for WIFI_EVENT_STA_BEACON_TIMEOUT");
+  WIFI_ERROR_CHECK_LOG(
+    esp_event_handler_unregister(WIFI_EVENT, WIFI_EVENT_STA_STOP, &wifiEventHandler_Stop), 
+    "unregister an event handler for WIFI_EVENT_STA_STOP");
+  WIFI_ERROR_CHECK_LOG(
+    esp_event_handler_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifiEventHandler_GotIP), 
+    "unregister an event handler for IP_EVENT_STA_GOT_IP");
+  WIFI_ERROR_CHECK_LOG(
+    esp_event_handler_unregister(IP_EVENT, IP_EVENT_STA_LOST_IP, &wifiEventHandler_Disconnect), 
+    "unregister an event handler for IP_EVENT_STA_LOST_IP");
+
+  // Register ping event handlers
+  #if CONFIG_PINGER_ENABLE
+    eventHandlerUnregister(RE_PING_EVENTS, RE_PING_INET_AVAILABLE, &wifiEventHandlerPing);
+    eventHandlerUnregister(RE_PING_EVENTS, RE_PING_INET_UNAVAILABLE, &wifiEventHandlerPing);
+  #endif // CONFIG_PINGER_ENABLE
+}
+
 // -----------------------------------------------------------------------------------------------------------------------
 // ---------------------------------------------------- Public functions -------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------
@@ -651,7 +697,7 @@ bool wifiInit()
   return true;
 }
 
-bool wifiStart(wifi_mode_t mode)
+bool wifiStart()
 {
   bool ret = true;
   // Initialization WiFi, if not done earlier
@@ -659,29 +705,17 @@ bool wifiStart(wifi_mode_t mode)
   // Stop the previous mode if it was activated
   if (ret) ret = wifiStop();
   // Low level init
-  if (ret) ret = wifiLowLevelInit(mode);
-  // Set WiFi mode
-  if (ret) ret = wifiSetMode(mode);
+  if (ret) ret = wifiLowLevelInit();
   // Allow reconnection
-  if (ret) ret = wifiStatusSet(_WIFI_ENABLED);
+  if (ret) ret = wifiStatusSet(_WIFI_STA_ENABLED);
   // Start WiFi
   if (ret) ret = wifiStartWiFi();
   return ret;
 }
 
-bool wifiStartSTA()
-{
-  return wifiStart(WIFI_MODE_STA); 
-}
-
-bool wifiStartAP()
-{
-  return wifiStart(WIFI_MODE_AP); 
-}
-
 bool wifiStop()
 {
-  wifiStatusClear(_WIFI_ENABLED);
+  wifiStatusClear(_WIFI_STA_ENABLED);
   return wifiStopWiFi();
 }
 
@@ -700,6 +734,21 @@ bool wifiFree()
 // -----------------------------------------------------------------------------------------------------------------------
 // ---------------------------------------------------- Other functions --------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------
+
+wifi_mode_t wifiMode()
+{
+  if(!wifiStatusCheck(_WIFI_LOWLEVEL_INIT, false)) {
+    return WIFI_MODE_NULL;
+  };
+
+  wifi_mode_t mode;
+  if (esp_wifi_get_mode(&mode) == ESP_ERR_WIFI_NOT_INIT) {
+    rlog_w(logTAG, "WiFi not started!");
+    return WIFI_MODE_NULL;
+  };
+
+  return mode;
+}
 
 wifi_ap_record_t wifiInfo()
 {
@@ -804,7 +853,6 @@ esp_err_t wifiHostByName(const char* hostname, ip_addr_t* hostaddr)
     };
 
     return ESP_OK;
-  } else {
-    return ESP_ERR_INVALID_ARG;
   };
+  return ESP_ERR_INVALID_ARG;
 }

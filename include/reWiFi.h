@@ -23,16 +23,13 @@ extern "C" {
 #include "lwip/sockets.h"
 #include "lwip/ip_addr.h"
 
-wifi_mode_t wifiMode();
-
 bool wifiInit();
-bool wifiStart(wifi_mode_t mode);
-bool wifiStartSTA();
-bool wifiStartAP();
+bool wifiStart();
 bool wifiStop();
 bool wifiFree();
 bool wifiIsConnected();
 
+wifi_mode_t wifiMode();
 wifi_ap_record_t wifiInfo();
 int8_t wifiRSSI();
 esp_netif_ip_info_t wifiLocalIP();
