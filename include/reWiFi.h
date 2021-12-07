@@ -32,6 +32,7 @@ bool wifiIsConnected();
 wifi_mode_t wifiMode();
 wifi_ap_record_t wifiInfo();
 int8_t wifiRSSI();
+const char* wifiGetSSID();
 esp_netif_ip_info_t wifiLocalIP();
 char* wifiGetLocalIP();
 char* wifiGetGatewayIP();

@@ -27,12 +27,14 @@ static const char * logTAG = "WiFi";
 static const char * wifiNvsGroup = "wifi";
 static const char * wifiNvsIndex = "index";
 
-static const int _WIFI_TCPIP_INIT         = BIT0;
-static const int _WIFI_LOWLEVEL_INIT      = BIT1;
-static const int _WIFI_STA_ENABLED        = BIT2;
-static const int _WIFI_STA_STARTED        = BIT3;
-static const int _WIFI_STA_CONNECTED      = BIT4;
-static const int _WIFI_STA_GOT_IP         = BIT5;
+static const int _WIFI_TCPIP_INIT             = BIT0;
+static const int _WIFI_LOWLEVEL_INIT          = BIT1;
+static const int _WIFI_STA_ENABLED            = BIT2;
+static const int _WIFI_STA_STARTED            = BIT3;
+static const int _WIFI_STA_CONNECTED          = BIT4;
+static const int _WIFI_STA_GOT_IP             = BIT5;
+static const int _WIFI_STA_DISCONNECT_STOP    = BIT6;
+static const int _WIFI_STA_DISCONNECT_RESTART = BIT7;
 
 static uint32_t _wifiAttemptCount = 0;
 static EventGroupHandle_t _wifiStatusBits = nullptr;
@@ -330,7 +332,7 @@ bool wifiConnectSTA()
         if (++_wifiCurrIndex > _wifiMaxIndex) {
           _wifiCurrIndex = 1;
         };
-        rlog_d(logTAG, "Select new WiFi index: %d", _wifiCurrIndex);
+        rlog_d(logTAG, "Attempting to connect to another access point: %d", _wifiCurrIndex);
         wifiStatusSet(_wifiIndexWasChanged);
       };
     };
@@ -395,7 +397,7 @@ bool wifiConnectSTA()
   // Wi-Fi Connect Phase
   // https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/wifi.html#wi-fi-connect-phase
   _wifiAttemptCount++;
-  rlog_i(logTAG, "Connecting to WiFi network [ %s ]...", reinterpret_cast<char*>(conf.sta.ssid));
+  rlog_i(logTAG, "Connecting to WiFi network [ %s ], attempt %d...", reinterpret_cast<char*>(conf.sta.ssid), _wifiAttemptCount);
   WIFI_ERROR_CHECK_BOOL(esp_wifi_connect(), "сonnect the ESP32 WiFi station to the AP");
 
   return true;
@@ -405,12 +407,40 @@ bool wifiConnectSTA()
 // --------------------------------------------------- Internal functions ------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------
 
+bool _wifiStartSTA()
+{
+  rlog_d(logTAG, "Start WiFi STA mode...");
+  WIFI_ERROR_CHECK_BOOL(esp_wifi_set_mode(WIFI_MODE_STA), "set the WiFi operating mode");
+  WIFI_ERROR_CHECK_BOOL(esp_wifi_start(), "start WiFi");
+  return true;
+}
+
+bool _wifiDisconnectSTA(EventBits_t next_stage)
+{
+  rlog_d(logTAG, "Disconnect from AP...");
+  if (next_stage > 0) wifiStatusSet(next_stage);
+  WIFI_ERROR_CHECK_BOOL(esp_wifi_disconnect(), "WiFi disconnect");
+  return true;
+}
+
+bool _wifiStopSTA()
+{
+  rlog_d(logTAG, "Stop WiFi STA mode...");
+  WIFI_ERROR_CHECK_BOOL(esp_wifi_stop(), "WiFi stop");
+  return true;
+}
+
+bool _wifiResetSTA()
+{
+  rlog_w(logTAG, "Restore WiFi stack persistent settings to default values!");
+  WIFI_ERROR_CHECK_BOOL(esp_wifi_restore(), "restore WiFi stack persistent settings to default values");
+  return true;
+}
+
 bool wifiStartWiFi()
 {
   if (!wifiStatusCheck(_WIFI_STA_STARTED, false)) {
-    rlog_d(logTAG, "Start WiFi...");
-    WIFI_ERROR_CHECK_BOOL(esp_wifi_set_mode(WIFI_MODE_STA), "set the WiFi operating mode");
-    WIFI_ERROR_CHECK_BOOL(esp_wifi_start(), "start WiFi");
+    return _wifiStartSTA();
   };
   return true;
 };
@@ -418,37 +448,49 @@ bool wifiStartWiFi()
 bool wifiStopWiFi()
 {
   if (wifiStatusCheck(_WIFI_STA_CONNECTED, false)) {
-    rlog_d(logTAG, "Disconnect from AP...");
-    WIFI_ERROR_CHECK_BOOL(esp_wifi_disconnect(), "WiFi disconnect");
+    return _wifiDisconnectSTA(_WIFI_STA_DISCONNECT_STOP);
   } else {
     if (wifiStatusCheck(_WIFI_STA_STARTED, false)) {
-      rlog_d(logTAG, "Stop WiFi mode...");
-      WIFI_ERROR_CHECK_BOOL(esp_wifi_stop(), "WiFi stop");
+      return _wifiStopSTA();
     };
   };
   return true;
 }
 
-bool wifiResetWiFi()
+bool wifiRestartWiFi()
 {
-  rlog_w(logTAG, "Restore WiFi stack persistent settings to default values!");
-  WIFI_ERROR_CHECK_BOOL(esp_wifi_restore(), "restore WiFi stack persistent settings to default values");
-  return true;
+  if (wifiStatusCheck(_WIFI_STA_CONNECTED, false)) {
+    return _wifiDisconnectSTA(_WIFI_STA_DISCONNECT_RESTART);
+  } else {
+    if (wifiStatusCheck(_WIFI_STA_STARTED, false)) {
+      return _wifiResetSTA();
+    } else {
+      return _wifiStartSTA();
+    };
+  };
 }
 
-bool wifiReconnectSTA()
+bool wifiReconnectWiFi()
 {
-  if (wifiIsEnabled()) {
-    if (_wifiAttemptCount > CONFIG_WIFI_RESTART_ATTEMPTS) {
-      return wifiResetWiFi();
+  if (wifiStatusCheck(_WIFI_STA_DISCONNECT_STOP, true)) {
+    return _wifiStopSTA();
+  } else if (wifiStatusCheck(_WIFI_STA_DISCONNECT_RESTART, true)) {
+    return _wifiResetSTA();
+  } else {
+    if (wifiStatusCheck(_WIFI_STA_ENABLED, false)) {
+      if (_wifiAttemptCount > CONFIG_WIFI_RESTART_ATTEMPTS) {
+        return wifiRestartWiFi();
+      } else {
+        if (_wifiAttemptCount > CONFIG_WIFI_RECONNECT_ATTEMPTS) {
+          _wifiIndexNeedChange = true;
+        };
+        if (!_wifiIndexNeedChange) {
+          vTaskDelay(pdMS_TO_TICKS(CONFIG_WIFI_RECONNECT_DELAY));
+        };
+        return wifiConnectSTA();
+      };
     } else {
-      if (_wifiAttemptCount > CONFIG_WIFI_RECONNECT_ATTEMPTS) {
-        _wifiIndexNeedChange = true;
-      };
-      if (!_wifiIndexNeedChange) {
-        vTaskDelay(pdMS_TO_TICKS(CONFIG_WIFI_RECONNECT_DELAY));
-      };
-      return wifiConnectSTA();
+      wifiStopWiFi();
     };
   };
   return false;
@@ -462,7 +504,7 @@ static void wifiEventHandler_Start(void* arg, esp_event_base_t event_base, int32
 {
   // Set status bits
   wifiStatusSet(_WIFI_STA_ENABLED | _WIFI_STA_STARTED);
-  wifiStatusClear(_WIFI_STA_CONNECTED | _WIFI_STA_GOT_IP);
+  wifiStatusClear(_WIFI_STA_CONNECTED | _WIFI_STA_GOT_IP | _WIFI_STA_DISCONNECT_STOP | _WIFI_STA_DISCONNECT_RESTART);
   // Reset attempts count
   _wifiAttemptCount = 0;
   // Re-dispatch event to another loop
@@ -477,7 +519,7 @@ static void wifiEventHandler_Connect(void* arg, esp_event_base_t event_base, int
 {
   // Set status bits
   wifiStatusSet(_WIFI_STA_CONNECTED);
-  wifiStatusClear(_WIFI_STA_GOT_IP);
+  wifiStatusClear(_WIFI_STA_GOT_IP | _WIFI_STA_DISCONNECT_STOP | _WIFI_STA_DISCONNECT_RESTART);
   // Save successful connection number
   #ifndef CONFIG_WIFI_SSID
     _wifiIndexNeedChange = false;
@@ -508,39 +550,29 @@ static void wifiEventHandler_Disconnect(void* arg, esp_event_base_t event_base, 
       if (isWasConnected && isWasIP) {
         // Re-dispatch event to another loop
         eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_DISCONNECTED, nullptr, 0, portMAX_DELAY);  
-        // Log
         rlog_e(logTAG, "WiFi connection [ %s ] lost: beacon timeout!", wifiGetSSID());
-        // Reconnect
-        wifiReconnectSTA();
       } else {
         rlog_e(logTAG, "Failed to connect to WiFi network: beacon timeout!");
-        // Next connection attempt
-        wifiReconnectSTA();
       };
+      // Next connection attempt
+      wifiReconnectWiFi();
     } else if (event_id == IP_EVENT_STA_LOST_IP) {
       // Re-dispatch event to another loop
       eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_DISCONNECTED, nullptr, 0, portMAX_DELAY);
-      // Log
       rlog_e(logTAG, "WiFi connection [ %s ] lost WiFi IP address!", wifiGetSSID());
-      // Reconnect
-      wifiReconnectSTA();
+      // Next connection attempt
+      wifiReconnectWiFi();
     } else {
       wifi_event_sta_disconnected_t * data = (wifi_event_sta_disconnected_t*)event_data;
       if (isWasConnected && isWasIP) {
         // Re-dispatch event to another loop
         eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_DISCONNECTED, data, sizeof(wifi_event_sta_disconnected_t), portMAX_DELAY);  
-        // Log
         rlog_e(logTAG, "WiFi connection [ %s ] lost: #%d!", wifiGetSSID(), data->reason);
-        // Reconnect
-        wifiReconnectSTA();
       } else {
         rlog_e(logTAG, "Failed to connect to WiFi network: #%d!", data->reason);
-        // Next connection attempt
-        if (data->reason == WIFI_REASON_NO_AP_FOUND) {
-          _wifiIndexNeedChange = true;
-        };
-        wifiReconnectSTA();
       };
+      // Next connection attempt
+      wifiReconnectWiFi();
     };
   } else {
     // Stop WiFi
@@ -819,7 +851,7 @@ const char* wifiGetHostname()
 {
   const char* hostname = NULL;
   
-  if (wifiMode() == WIFI_MODE_NULL){
+  if (wifiMode() == WIFI_MODE_NULL) {
     return hostname;
   };
 
