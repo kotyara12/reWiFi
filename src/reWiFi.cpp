@@ -18,10 +18,6 @@
 #include "esp_event.h"
 #include "project_config.h"
 #include "def_consts.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "freertos/queue.h"
-#include "freertos/event_groups.h"
 
 static const char * logTAG = "WiFi";
 static const char * wifiNvsGroup = "wifi";
@@ -142,6 +138,21 @@ EventBits_t wifiStatusWait(const EventBits_t bits, const BaseType_t clearOnExit,
     return xEventGroupWaitBits(_wifiStatusBits, bits, clearOnExit, pdTRUE, pdMS_TO_TICKS(timeout_ms)) & bits; 
   };
 }
+
+char* wifiStatusGetJson()
+{
+  EventBits_t bits = wifiStatusGet();
+  return malloc_stringf("{\"init_tcpip\":%d,\"init_low\":%d,\"sta_enabled\":%d,\"sta_started\":%d,\"sta_connected\":%d,\"sta_got_ip\":%d,\"disconnect_and_stop\":%d,\"disconnect_and_restart\":%d}",
+    (bits & _WIFI_TCPIP_INIT) == _WIFI_TCPIP_INIT,
+    (bits & _WIFI_LOWLEVEL_INIT) == _WIFI_LOWLEVEL_INIT,
+    (bits & _WIFI_STA_ENABLED) == _WIFI_STA_ENABLED,
+    (bits & _WIFI_STA_STARTED) == _WIFI_STA_STARTED,
+    (bits & _WIFI_STA_CONNECTED) == _WIFI_STA_CONNECTED,
+    (bits & _WIFI_STA_GOT_IP) == _WIFI_STA_GOT_IP,
+    (bits & _WIFI_STA_DISCONNECT_STOP) == _WIFI_STA_DISCONNECT_STOP,
+    (bits & _WIFI_STA_DISCONNECT_RESTART) == _WIFI_STA_DISCONNECT_RESTART);
+};
+ 
 
 // -----------------------------------------------------------------------------------------------------------------------
 // ----------------------------------------------- Low-level WiFi functions ----------------------------------------------

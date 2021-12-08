@@ -22,6 +22,10 @@ extern "C" {
 #include "lwip/netdb.h"
 #include "lwip/sockets.h"
 #include "lwip/ip_addr.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/queue.h"
+#include "freertos/event_groups.h"
 
 bool wifiInit();
 bool wifiStart();
@@ -29,6 +33,8 @@ bool wifiStop();
 bool wifiFree();
 bool wifiIsConnected();
 
+EventBits_t wifiStatusGet();
+char* wifiStatusGetJson();
 wifi_mode_t wifiMode();
 wifi_ap_record_t wifiInfo();
 int8_t wifiRSSI();
