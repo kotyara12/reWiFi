@@ -16,6 +16,7 @@
 #include "reEvents.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
+#include "esp_timer.h"
 #include "project_config.h"
 #include "def_consts.h"
 
@@ -269,6 +270,76 @@ bool wifiLowLevelDeinit()
 }
 
 // -----------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------------- Timeout -------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------
+
+static esp_timer_handle_t _wifiTimer = nullptr;
+
+bool wifiReconnectWiFi();
+static void wifiTimeoutEnd(void* arg)
+{
+  rlog_e(logTAG, "Time-out!");
+  wifiReconnectWiFi();
+}
+
+static void wifiTimeoutCreate() {
+  if (_wifiTimer) {
+    if (esp_timer_is_active(_wifiTimer)) {
+      esp_timer_stop(_wifiTimer);
+    };
+  } else {
+    esp_timer_create_args_t timer_args;
+    memset(&timer_args, 0, sizeof(esp_timer_create_args_t));
+    timer_args.callback = &wifiTimeoutEnd;
+    timer_args.name = "timer_wifi";
+    if (esp_timer_create(&timer_args, &_wifiTimer) != ESP_OK) {
+      rlog_e(logTAG, "Failed to create timeout timer");
+    };
+  };
+  rlog_v(logTAG, "WiFi timer was created");
+}
+
+static void wifiTimeoutStart(uint32_t ms_timeout) {
+  if (!_wifiTimer) {
+    wifiTimeoutCreate();
+  };
+  if (_wifiTimer) {
+    if (esp_timer_is_active(_wifiTimer)) {
+      esp_timer_stop(_wifiTimer);
+    };
+    if (esp_timer_start_once(_wifiTimer, ms_timeout * 1000) == ESP_OK) {
+      rlog_v(logTAG, "WiFi timer was started");
+    } else {  
+      rlog_e(logTAG, "Failed to start timeout timer");
+    };
+  };
+}
+
+static void wifiTimeoutStop() {
+  if (_wifiTimer) {
+    if (esp_timer_is_active(_wifiTimer)) {
+      if (esp_timer_stop(_wifiTimer) == ESP_OK) {
+        rlog_v(logTAG, "WiFi timer was stoped");
+      } else {  
+        rlog_e(logTAG, "Failed to stop timeout timer");
+      };
+    };
+  };
+}
+
+static void wifiTimeoutDelete()
+{
+  if (_wifiTimer) {
+    if (esp_timer_is_active(_wifiTimer)) {
+      esp_timer_stop(_wifiTimer);
+    };
+    esp_timer_delete(_wifiTimer);
+    _wifiTimer = nullptr;
+    rlog_v(logTAG, "WiFi timer was deleted");
+  };
+}
+
+// -----------------------------------------------------------------------------------------------------------------------
 // --------------------------------------------------- Configure STA mode ------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------
 
@@ -409,6 +480,7 @@ bool wifiConnectSTA()
   // https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/wifi.html#wi-fi-connect-phase
   _wifiAttemptCount++;
   rlog_i(logTAG, "Connecting to WiFi network [ %s ], attempt %d...", reinterpret_cast<char*>(conf.sta.ssid), _wifiAttemptCount);
+  wifiTimeoutStart(CONFIG_WIFI_TIMEOUT);
   WIFI_ERROR_CHECK_BOOL(esp_wifi_connect(), "сonnect the ESP32 WiFi station to the AP");
 
   return true;
@@ -423,6 +495,7 @@ bool _wifiStartSTA()
   rlog_d(logTAG, "Start WiFi STA mode...");
   WIFI_ERROR_CHECK_BOOL(esp_wifi_set_mode(WIFI_MODE_STA), "set the WiFi operating mode");
   WIFI_ERROR_CHECK_BOOL(esp_wifi_start(), "start WiFi");
+  wifiTimeoutStart(CONFIG_WIFI_TIMEOUT);
   return true;
 }
 
@@ -431,6 +504,7 @@ bool _wifiDisconnectSTA(EventBits_t next_stage)
   rlog_d(logTAG, "Disconnect from AP...");
   if (next_stage > 0) wifiStatusSet(next_stage);
   WIFI_ERROR_CHECK_BOOL(esp_wifi_disconnect(), "WiFi disconnect");
+  wifiTimeoutStart(CONFIG_WIFI_TIMEOUT);
   return true;
 }
 
@@ -445,6 +519,7 @@ bool _wifiResetSTA()
 {
   rlog_w(logTAG, "Restore WiFi stack persistent settings to default values!");
   WIFI_ERROR_CHECK_BOOL(esp_wifi_restore(), "restore WiFi stack persistent settings to default values");
+  wifiTimeoutStart(CONFIG_WIFI_TIMEOUT);
   return true;
 }
 
@@ -544,6 +619,8 @@ static void wifiEventHandler_Connect(void* arg, esp_event_base_t event_base, int
     wifi_event_sta_connected_t * data = (wifi_event_sta_connected_t*)event_data;
     rlog_i(logTAG, "WiFi connection [ %s ] established, RSSI: %d dBi", (char*)data->ssid, wifiRSSI());
   #endif
+  // Restart timer
+  wifiTimeoutStart(CONFIG_WIFI_TIMEOUT);
 }
 
 static void wifiEventHandler_Disconnect(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
@@ -554,6 +631,8 @@ static void wifiEventHandler_Disconnect(void* arg, esp_event_base_t event_base, 
   bool isWasIP = (prevStatusBits & _WIFI_STA_GOT_IP) == _WIFI_STA_GOT_IP;
   // Reset status bits
   wifiStatusClear(_WIFI_STA_CONNECTED | _WIFI_STA_GOT_IP);
+  // Stop timer
+  wifiTimeoutStop();
   // Check for forced (manual) WiFi disconnection
   if (wifiStatusCheck(_WIFI_STA_ENABLED, false)) {
     // Different reconnection scenarios
@@ -599,6 +678,8 @@ static void wifiEventHandler_Stop(void* arg, esp_event_base_t event_base, int32_
   eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_STOPPED, nullptr, 0, portMAX_DELAY);  
   // Log
   rlog_w(logTAG, "WiFi STA stopped");
+  // Delete timer
+  wifiTimeoutDelete();
   // If WiFi is enabled, restart it
   if (wifiStatusCheck(_WIFI_STA_ENABLED, false)) {
     wifiStartWiFi();
@@ -625,6 +706,8 @@ static void wifiEventHandler_GotIP(void* arg, esp_event_base_t event_base, int32
     rlog_i(logTAG, "Got IP-address: %d.%d.%d.%d, mask: %d.%d.%d.%d, gateway: %d.%d.%d.%d",
         ip[0], ip[1], ip[2], ip[3], mask[0], mask[1], mask[2], mask[3], gw[0], gw[1], gw[2], gw[3]);
   #endif
+  // Delete timer
+  wifiTimeoutDelete();
   #if !CONFIG_PINGER_ENABLE
     // If PINGER service is not available, send an event that the Internet is available immediately
     eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_PING_OK, nullptr, 0, portMAX_DELAY);  
