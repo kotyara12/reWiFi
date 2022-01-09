@@ -415,7 +415,7 @@ bool wifiConnectSTA()
           _wifiCurrIndex = 1;
         };
         rlog_d(logTAG, "Attempting to connect to another access point: %d", _wifiCurrIndex);
-        wifiStatusSet(_wifiIndexWasChanged);
+        _wifiIndexWasChanged = true;
       };
     };
 
