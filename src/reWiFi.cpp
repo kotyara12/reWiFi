@@ -13,6 +13,7 @@
 #include "rStrings.h"
 #include "reWiFi.h"
 #include "reNvs.h"
+#include "reEsp32.h"
 #include "reEvents.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
@@ -20,9 +21,15 @@
 #include "project_config.h"
 #include "def_consts.h"
 
-static const char * logTAG = "WiFi";
-static const char * wifiNvsGroup = "wifi";
-static const char * wifiNvsIndex = "index";
+static const char * logTAG                    = "WiFi";
+
+static const char * wifiNvsGroup              = "wifi";
+static const char * wifiNvsIndex              = "index";
+static const char * wifiNvsDebug              = "debug";
+static const char * wifiNvsReason             = "reason";
+static const char * wifiNvsBits               = "bits";
+static const char * wifiNvsCurrIndex          = "cidx";
+static const char * wifiNvsAttCount           = "acnt";
 
 static const int _WIFI_TCPIP_INIT             = BIT0;
 static const int _WIFI_LOWLEVEL_INIT          = BIT1;
@@ -36,6 +43,7 @@ static const int _WIFI_STA_DISCONNECT_RESTART = BIT7;
 static uint32_t _wifiAttemptCount = 0;
 static EventGroupHandle_t _wifiStatusBits = nullptr;
 static esp_netif_t *_wifiNetif = nullptr;
+static uint8_t _wifiLastErr = 0;
 #ifndef CONFIG_WIFI_SSID
 static uint8_t _wifiMaxIndex = 0;
 static uint8_t _wifiCurrIndex = 0;
@@ -140,9 +148,15 @@ EventBits_t wifiStatusWait(const EventBits_t bits, const BaseType_t clearOnExit,
   };
 }
 
-char* wifiStatusGetJson()
+
+// -----------------------------------------------------------------------------------------------------------------------
+// -------------------------------------------------- Debug information --------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------
+
+#if CONFIG_WIFI_DEBUG_ENABLE
+
+char* wifiStatusGetJsonEx(EventBits_t bits)
 {
-  EventBits_t bits = wifiStatusGet();
   return malloc_stringf("{\"init_tcpip\":%d,\"init_low\":%d,\"sta_enabled\":%d,\"sta_started\":%d,\"sta_connected\":%d,\"sta_got_ip\":%d,\"disconnect_and_stop\":%d,\"disconnect_and_restart\":%d}",
     (bits & _WIFI_TCPIP_INIT) == _WIFI_TCPIP_INIT,
     (bits & _WIFI_LOWLEVEL_INIT) == _WIFI_LOWLEVEL_INIT,
@@ -153,7 +167,54 @@ char* wifiStatusGetJson()
     (bits & _WIFI_STA_DISCONNECT_STOP) == _WIFI_STA_DISCONNECT_STOP,
     (bits & _WIFI_STA_DISCONNECT_RESTART) == _WIFI_STA_DISCONNECT_RESTART);
 };
+
+char* wifiStatusGetJson()
+{
+  EventBits_t bits = wifiStatusGet();
+  return wifiStatusGetJsonEx(bits);
+}
  
+void wifiStoreDebugInfo()
+{
+  uint32_t curr = time(nullptr);
+  uint32_t bits = wifiStatusGet();
+  nvsWrite(wifiNvsGroup, wifiNvsDebug, OPT_TYPE_U32, &curr);
+  nvsWrite(wifiNvsGroup, wifiNvsReason, OPT_TYPE_U8, &_wifiLastErr);
+  nvsWrite(wifiNvsGroup, wifiNvsBits, OPT_TYPE_U32, &bits);
+  nvsWrite(wifiNvsGroup, wifiNvsCurrIndex, OPT_TYPE_U8, &_wifiCurrIndex);
+  nvsWrite(wifiNvsGroup, wifiNvsAttCount, OPT_TYPE_U32, &_wifiAttemptCount);
+};
+
+char* wifiGetDebugInfo()
+{
+  uint8_t  last_index = 0;
+  uint8_t  last_reason = 0;
+  uint32_t time_restart = 0;
+  uint32_t time_clear = 0;
+  uint32_t attempts = 0;
+  uint32_t bits = 0;
+
+  nvsRead(wifiNvsGroup, wifiNvsDebug, OPT_TYPE_U32, &time_restart);
+  if (time_restart > 0) {
+    nvsWrite(wifiNvsGroup, wifiNvsDebug, OPT_TYPE_U32, &time_clear);
+    nvsRead(wifiNvsGroup, wifiNvsReason, OPT_TYPE_U8, &last_reason);
+    nvsRead(wifiNvsGroup, wifiNvsCurrIndex, OPT_TYPE_U8, &last_index);
+    nvsRead(wifiNvsGroup, wifiNvsAttCount, OPT_TYPE_U32, &attempts);
+    nvsRead(wifiNvsGroup, wifiNvsBits, OPT_TYPE_U32, &bits);
+
+    char* _json = nullptr;
+    char* _states = wifiStatusGetJsonEx(bits);
+    if (_states) {
+      _json = malloc_stringf("{\"last_error\":%d,\"unixtime\":%d,\"index\":%d,\"attempts\":%d,\"bits\":%d,\"states\":%s}",
+        last_reason, time_restart, last_index, attempts, bits, _states);
+      free(_states);
+      return _json;
+    };
+  };
+  return nullptr;
+}
+
+#endif // CONFIG_WIFI_DEBUG_ENABLE
 
 // -----------------------------------------------------------------------------------------------------------------------
 // ----------------------------------------------- Low-level WiFi functions ----------------------------------------------
@@ -282,7 +343,8 @@ static void wifiTimeoutEnd(void* arg)
   wifiReconnectWiFi();
 }
 
-static void wifiTimeoutCreate() {
+static void wifiTimeoutCreate() 
+{
   if (_wifiTimer) {
     if (esp_timer_is_active(_wifiTimer)) {
       esp_timer_stop(_wifiTimer);
@@ -299,7 +361,8 @@ static void wifiTimeoutCreate() {
   rlog_v(logTAG, "WiFi timer was created");
 }
 
-static void wifiTimeoutStart(uint32_t ms_timeout) {
+static void wifiTimeoutStart(uint32_t ms_timeout) 
+{
   if (!_wifiTimer) {
     wifiTimeoutCreate();
   };
@@ -315,7 +378,8 @@ static void wifiTimeoutStart(uint32_t ms_timeout) {
   };
 }
 
-static void wifiTimeoutStop() {
+static void wifiTimeoutStop() 
+{
   if (_wifiTimer) {
     if (esp_timer_is_active(_wifiTimer)) {
       if (esp_timer_stop(_wifiTimer) == ESP_OK) {
@@ -338,6 +402,52 @@ static void wifiTimeoutDelete()
     rlog_v(logTAG, "WiFi timer was deleted");
   };
 }
+
+#if defined(CONFIG_WIFI_TIMER_RESTART_DEVICE) && CONFIG_WIFI_TIMER_RESTART_DEVICE > 0
+
+static esp_timer_handle_t _wifiRestartTimer = nullptr;
+
+static void wifiRestartTimerEnd(void* arg)
+{
+  rlog_e(logTAG, "WiFi reconnect timeout - restart device!");
+  #if CONFIG_WIFI_DEBUG_ENABLE
+  wifiStoreDebugInfo();
+  #endif // CONFIG_WIFI_DEBUG_ENABLE
+  espRestart(RR_WIFI_TIMEOUT);
+}
+
+static void wifiRestartTimerStart() 
+{
+  if (!_wifiRestartTimer) {
+    esp_timer_create_args_t timer_args;
+    memset(&timer_args, 0, sizeof(esp_timer_create_args_t));
+    timer_args.callback = &wifiRestartTimerEnd;
+    timer_args.name = "timer_wifi_dev";
+    if (esp_timer_create(&timer_args, &_wifiRestartTimer) == ESP_OK) {
+      if (esp_timer_start_once(_wifiRestartTimer, (uint64_t)CONFIG_WIFI_TIMER_RESTART_DEVICE * 60000000) == ESP_OK) {
+        rlog_w(logTAG, "Timer started to restart device in %d minutes", CONFIG_WIFI_TIMER_RESTART_DEVICE);
+      } else {  
+        rlog_e(logTAG, "Failed to start device restart timer");
+      };
+    } else {
+      rlog_e(logTAG, "Failed to create device restart timer");
+    };
+  };
+}
+
+static void wifiRestartTimerDelete()
+{
+  if (_wifiRestartTimer) {
+    if (esp_timer_is_active(_wifiRestartTimer)) {
+      esp_timer_stop(_wifiRestartTimer);
+    };
+    esp_timer_delete(_wifiRestartTimer);
+    _wifiRestartTimer = nullptr;
+    rlog_i(logTAG, "Device restart timer disabled");
+  };
+}
+
+#endif // CONFIG_WIFI_TIMER_RESTART_DEVICE
 
 // -----------------------------------------------------------------------------------------------------------------------
 // --------------------------------------------------- Configure STA mode ------------------------------------------------
@@ -593,10 +703,15 @@ static void wifiEventHandler_Start(void* arg, esp_event_base_t event_base, int32
   wifiStatusClear(_WIFI_STA_CONNECTED | _WIFI_STA_GOT_IP | _WIFI_STA_DISCONNECT_STOP | _WIFI_STA_DISCONNECT_RESTART);
   // Reset attempts count
   _wifiAttemptCount = 0;
+  _wifiLastErr = 0;
   // Re-dispatch event to another loop
   eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_STARTED, nullptr, 0, portMAX_DELAY);  
   // Log
   rlog_i(logTAG, "WiFi STA started");
+  // Start device restart timer
+  #if defined(CONFIG_WIFI_TIMER_RESTART_DEVICE) && CONFIG_WIFI_TIMER_RESTART_DEVICE > 0
+  wifiRestartTimerStart();
+  #endif // CONFIG_WIFI_TIMER_RESTART_DEVICE
   // Start connection
   wifiConnectSTA();
 }
@@ -616,8 +731,10 @@ static void wifiEventHandler_Connect(void* arg, esp_event_base_t event_base, int
   #endif // CONFIG_WIFI_SSID
   // Log
   #if CONFIG_RLOG_PROJECT_LEVEL >= RLOG_LEVEL_INFO
-    wifi_event_sta_connected_t * data = (wifi_event_sta_connected_t*)event_data;
-    rlog_i(logTAG, "WiFi connection [ %s ] established, RSSI: %d dBi", (char*)data->ssid, wifiRSSI());
+    if (event_data) {
+      wifi_event_sta_connected_t * data = (wifi_event_sta_connected_t*)event_data;
+      rlog_i(logTAG, "WiFi connection [ %s ] established, RSSI: %d dBi", (char*)data->ssid, wifiRSSI());
+    };
   #endif
   // Restart timer
   wifiTimeoutStart(CONFIG_WIFI_TIMEOUT);
@@ -633,10 +750,15 @@ static void wifiEventHandler_Disconnect(void* arg, esp_event_base_t event_base, 
   wifiStatusClear(_WIFI_STA_CONNECTED | _WIFI_STA_GOT_IP);
   // Stop timer
   wifiTimeoutStop();
+  // Start device restart timer
+  #if defined(CONFIG_WIFI_TIMER_RESTART_DEVICE) && CONFIG_WIFI_TIMER_RESTART_DEVICE > 0
+  wifiRestartTimerStart();
+  #endif // CONFIG_WIFI_TIMER_RESTART_DEVICE
   // Check for forced (manual) WiFi disconnection
   if (wifiStatusCheck(_WIFI_STA_ENABLED, false)) {
     // Different reconnection scenarios
     if (event_id == WIFI_EVENT_STA_BEACON_TIMEOUT) {
+      _wifiLastErr = WIFI_REASON_BEACON_TIMEOUT;
       if (isWasConnected && isWasIP) {
         // Re-dispatch event to another loop
         eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_DISCONNECTED, nullptr, 0, portMAX_DELAY);  
@@ -654,12 +776,21 @@ static void wifiEventHandler_Disconnect(void* arg, esp_event_base_t event_base, 
       wifiReconnectWiFi();
     } else {
       wifi_event_sta_disconnected_t * data = (wifi_event_sta_disconnected_t*)event_data;
+      if (data) {
+        _wifiLastErr = data->reason;
+      } else {
+        _wifiLastErr = WIFI_REASON_UNSPECIFIED;
+      };
       if (isWasConnected && isWasIP) {
         // Re-dispatch event to another loop
-        eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_DISCONNECTED, data, sizeof(wifi_event_sta_disconnected_t), portMAX_DELAY);  
-        rlog_e(logTAG, "WiFi connection [ %s ] lost: #%d!", wifiGetSSID(), data->reason);
+        if (data) {
+          eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_DISCONNECTED, data, sizeof(wifi_event_sta_disconnected_t), portMAX_DELAY);  
+        } else {
+          eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_DISCONNECTED, nullptr, 0, portMAX_DELAY);
+        };
+        rlog_e(logTAG, "WiFi connection [ %s ] lost: #%d!", wifiGetSSID(), _wifiLastErr);
       } else {
-        rlog_e(logTAG, "Failed to connect to WiFi network: #%d!", data->reason);
+        rlog_e(logTAG, "Failed to connect to WiFi network: #%d!", _wifiLastErr);
       };
       // Next connection attempt
       wifiReconnectWiFi();
@@ -685,6 +816,11 @@ static void wifiEventHandler_Stop(void* arg, esp_event_base_t event_base, int32_
     wifiStartWiFi();
   // ... otherwise we turn off everything
   } else {
+    // Delete device restart timer
+    #if defined(CONFIG_WIFI_TIMER_RESTART_DEVICE) && CONFIG_WIFI_TIMER_RESTART_DEVICE > 0
+    wifiRestartTimerDelete();
+    #endif // CONFIG_WIFI_TIMER_RESTART_DEVICE
+    // Low-level deinit
     wifiLowLevelDeinit();
   };
 }
@@ -695,19 +831,28 @@ static void wifiEventHandler_GotIP(void* arg, esp_event_base_t event_base, int32
   wifiStatusSet(_WIFI_STA_GOT_IP);
   // Reset attempts count
   _wifiAttemptCount = 0;
+  _wifiLastErr = 0;
   // Re-dispatch event to another loop
-  ip_event_got_ip_t * data = (ip_event_got_ip_t*)event_data;
-  eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_GOT_IP, data, sizeof(ip_event_got_ip_t), portMAX_DELAY);  
-  // Log
-  #if CONFIG_RLOG_PROJECT_LEVEL >= RLOG_LEVEL_INFO
-    uint8_t * ip = (uint8_t*)&(data->ip_info.ip.addr);
-    uint8_t * mask = (uint8_t*)&(data->ip_info.netmask.addr);
-    uint8_t * gw = (uint8_t*)&(data->ip_info.gw.addr);
-    rlog_i(logTAG, "Got IP-address: %d.%d.%d.%d, mask: %d.%d.%d.%d, gateway: %d.%d.%d.%d",
-        ip[0], ip[1], ip[2], ip[3], mask[0], mask[1], mask[2], mask[3], gw[0], gw[1], gw[2], gw[3]);
-  #endif
+  if (event_data) {
+    ip_event_got_ip_t * data = (ip_event_got_ip_t*)event_data;
+    eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_GOT_IP, data, sizeof(ip_event_got_ip_t), portMAX_DELAY);  
+    // Log
+    #if CONFIG_RLOG_PROJECT_LEVEL >= RLOG_LEVEL_INFO
+      uint8_t * ip = (uint8_t*)&(data->ip_info.ip.addr);
+      uint8_t * mask = (uint8_t*)&(data->ip_info.netmask.addr);
+      uint8_t * gw = (uint8_t*)&(data->ip_info.gw.addr);
+      rlog_i(logTAG, "Got IP-address: %d.%d.%d.%d, mask: %d.%d.%d.%d, gateway: %d.%d.%d.%d",
+          ip[0], ip[1], ip[2], ip[3], mask[0], mask[1], mask[2], mask[3], gw[0], gw[1], gw[2], gw[3]);
+    #endif
+  } else {
+    eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_GOT_IP, nullptr, 0, portMAX_DELAY);  
+  };
   // Delete timer
   wifiTimeoutDelete();
+  // Delete device restart timer
+  #if defined(CONFIG_WIFI_TIMER_RESTART_DEVICE) && CONFIG_WIFI_TIMER_RESTART_DEVICE > 0
+  wifiRestartTimerDelete();
+  #endif // CONFIG_WIFI_TIMER_RESTART_DEVICE
   #if !CONFIG_PINGER_ENABLE
     // If PINGER service is not available, send an event that the Internet is available immediately
     eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_PING_OK, nullptr, 0, portMAX_DELAY);  

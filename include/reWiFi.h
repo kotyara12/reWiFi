@@ -34,7 +34,10 @@ bool wifiFree();
 bool wifiIsConnected();
 
 EventBits_t wifiStatusGet();
+#if CONFIG_WIFI_DEBUG_ENABLE
 char* wifiStatusGetJson();
+char* wifiGetDebugInfo();
+#endif // CONFIG_WIFI_DEBUG_ENABLE
 wifi_mode_t wifiMode();
 wifi_ap_record_t wifiInfo();
 int8_t wifiRSSI();
