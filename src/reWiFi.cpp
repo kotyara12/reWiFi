@@ -153,8 +153,6 @@ EventBits_t wifiStatusWait(const EventBits_t bits, const BaseType_t clearOnExit,
 // -------------------------------------------------- Debug information --------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------
 
-#if CONFIG_WIFI_DEBUG_ENABLE
-
 char* wifiStatusGetJsonEx(EventBits_t bits)
 {
   return malloc_stringf("{\"init_tcpip\":%d,\"init_low\":%d,\"sta_enabled\":%d,\"sta_started\":%d,\"sta_connected\":%d,\"sta_got_ip\":%d,\"disconnect_and_stop\":%d,\"disconnect_and_restart\":%d}",
@@ -174,6 +172,8 @@ char* wifiStatusGetJson()
   return wifiStatusGetJsonEx(bits);
 }
  
+#if CONFIG_WIFI_DEBUG_ENABLE
+
 void wifiStoreDebugInfo()
 {
   uint32_t curr = time(nullptr);
