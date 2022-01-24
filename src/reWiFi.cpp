@@ -413,7 +413,7 @@ static void wifiRestartTimerEnd(void* arg)
   #if CONFIG_WIFI_DEBUG_ENABLE
   wifiStoreDebugInfo();
   #endif // CONFIG_WIFI_DEBUG_ENABLE
-  espRestart(RR_WIFI_TIMEOUT);
+  espRestart(RR_WIFI_TIMEOUT, 0);
 }
 
 static void wifiRestartTimerStart() 
