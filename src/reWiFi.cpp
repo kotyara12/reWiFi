@@ -181,7 +181,9 @@ void wifiStoreDebugInfo()
   nvsWrite(wifiNvsGroup, wifiNvsDebug, OPT_TYPE_U32, &curr);
   nvsWrite(wifiNvsGroup, wifiNvsReason, OPT_TYPE_U8, &_wifiLastErr);
   nvsWrite(wifiNvsGroup, wifiNvsBits, OPT_TYPE_U32, &bits);
+  #ifndef CONFIG_WIFI_SSID
   nvsWrite(wifiNvsGroup, wifiNvsCurrIndex, OPT_TYPE_U8, &_wifiCurrIndex);
+  #endif // CONFIG_WIFI_SSID
   nvsWrite(wifiNvsGroup, wifiNvsAttCount, OPT_TYPE_U32, &_wifiAttemptCount);
 };
 
@@ -678,11 +680,17 @@ bool wifiReconnectWiFi()
         return wifiRestartWiFi();
       } else {
         if (_wifiAttemptCount > CONFIG_WIFI_RECONNECT_ATTEMPTS) {
+          #ifndef CONFIG_WIFI_SSID
           _wifiIndexNeedChange = true;
+          #endif // CONFIG_WIFI_SSID
         };
-        if (!_wifiIndexNeedChange) {
+        #ifdef CONFIG_WIFI_SSID
           vTaskDelay(pdMS_TO_TICKS(CONFIG_WIFI_RECONNECT_DELAY));
-        };
+        #else
+          if (!_wifiIndexNeedChange) {
+            vTaskDelay(pdMS_TO_TICKS(CONFIG_WIFI_RECONNECT_DELAY));
+          };
+        #endif // CONFIG_WIFI_SSID
         return wifiConnectSTA();
       };
     } else {
