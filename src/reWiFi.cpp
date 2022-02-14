@@ -224,9 +224,6 @@ char* wifiGetDebugInfo()
 
 static bool wifiRegisterEventHandlers();
 static void wifiUnregisterEventHandlers();
-#if CONFIG_PINGER_ENABLE
-static void wifiEventHandlerPing(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
-#endif // CONFIG_PINGER_ENABLE
 
 // Wi-Fi/LwIP Init Phase
 // https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/wifi.html#wi-fi-lwip-init-phase
@@ -861,34 +858,7 @@ static void wifiEventHandler_GotIP(void* arg, esp_event_base_t event_base, int32
   #if defined(CONFIG_WIFI_TIMER_RESTART_DEVICE) && CONFIG_WIFI_TIMER_RESTART_DEVICE > 0
   wifiRestartTimerDelete();
   #endif // CONFIG_WIFI_TIMER_RESTART_DEVICE
-  #if !CONFIG_PINGER_ENABLE
-    // If PINGER service is not available, send an event that the Internet is available immediately
-    eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_PING_OK, nullptr, 0, portMAX_DELAY);  
-  #endif // CONFIG_PINGER_ENABLE
 }
-
-#if CONFIG_PINGER_ENABLE
-// Relaying PING_EVENT events to WIFI_EVENT
-static void wifiEventHandlerPing(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
-{
-  ping_inet_data_t* data = (ping_inet_data_t*)event_data;
-
-  if (event_id == RE_PING_INET_AVAILABLE) {
-    if ((data) && (data->time_unavailable > 1000000000)) {
-      eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_PING_OK, &(data->time_unavailable), sizeof(time_t), portMAX_DELAY);
-    } else {
-      eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_PING_OK, nullptr, 0, portMAX_DELAY);
-    };
-  } 
-  else if (event_id == RE_PING_INET_UNAVAILABLE) {
-    if ((data) && (data->time_unavailable > 1000000000)) {
-      eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_PING_FAILED, &(data->time_unavailable), sizeof(time_t), portMAX_DELAY);
-    } else {
-      eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_PING_FAILED, nullptr, 0, portMAX_DELAY);
-    };
-  };
-}
-#endif // CONFIG_PINGER_ENABLE
 
 static bool wifiRegisterEventHandlers()
 {
@@ -913,12 +883,6 @@ static bool wifiRegisterEventHandlers()
   WIFI_ERROR_CHECK_BOOL(
     esp_event_handler_register(IP_EVENT, IP_EVENT_STA_LOST_IP, &wifiEventHandler_Disconnect, nullptr), 
     "register an event handler for IP_EVENT_STA_LOST_IP");
-
-  // Register ping event handlers
-  #if CONFIG_PINGER_ENABLE
-    eventHandlerRegister(RE_PING_EVENTS, RE_PING_INET_AVAILABLE, &wifiEventHandlerPing, nullptr);
-    eventHandlerRegister(RE_PING_EVENTS, RE_PING_INET_UNAVAILABLE, &wifiEventHandlerPing, nullptr);
-  #endif // CONFIG_PINGER_ENABLE
 
   return true;
 }
@@ -946,12 +910,6 @@ static void wifiUnregisterEventHandlers()
   WIFI_ERROR_CHECK_LOG(
     esp_event_handler_unregister(IP_EVENT, IP_EVENT_STA_LOST_IP, &wifiEventHandler_Disconnect), 
     "unregister an event handler for IP_EVENT_STA_LOST_IP");
-
-  // Register ping event handlers
-  #if CONFIG_PINGER_ENABLE
-    eventHandlerUnregister(RE_PING_EVENTS, RE_PING_INET_AVAILABLE, &wifiEventHandlerPing);
-    eventHandlerUnregister(RE_PING_EVENTS, RE_PING_INET_UNAVAILABLE, &wifiEventHandlerPing);
-  #endif // CONFIG_PINGER_ENABLE
 }
 
 // -----------------------------------------------------------------------------------------------------------------------
