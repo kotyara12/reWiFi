@@ -41,6 +41,7 @@ char* wifiGetDebugInfo();
 wifi_mode_t wifiMode();
 wifi_ap_record_t wifiInfo();
 int8_t wifiRSSI();
+bool wifiRSSIIsOk();
 const char* wifiGetSSID();
 esp_netif_ip_info_t wifiLocalIP();
 char* wifiGetLocalIP();

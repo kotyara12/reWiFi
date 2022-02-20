@@ -15,6 +15,7 @@
 #include "reNvs.h"
 #include "reEsp32.h"
 #include "reEvents.h"
+#include "reParams.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_timer.h"
@@ -916,6 +917,7 @@ static void wifiUnregisterEventHandlers()
 // ---------------------------------------------------- Public functions -------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------
 
+void wifiRegisterParameters();
 bool wifiInit()
 {
   if (!_wifiStatusBits) {
@@ -930,7 +932,7 @@ bool wifiInit()
     };
     xEventGroupClearBits(_wifiStatusBits, 0x00FFFFFF);
   };
-
+  wifiRegisterParameters();
   return true;
 }
 
@@ -966,6 +968,20 @@ bool wifiFree()
     _wifiStatusBits = nullptr;
   };
   return true;
+}
+
+// -----------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------------ Parameters -----------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------
+
+static uint8_t _wifiRssiThreshold = CONFIG_WIFI_RSSI_THERSHOLD;
+
+void wifiRegisterParameters()
+{
+  paramsGroupHandle_t pgWifi = paramsRegisterGroup(nullptr, CONFIG_WIFI_PGROUP_KEY, CONFIG_WIFI_PGROUP_TOPIC, CONFIG_WIFI_PGROUP_FRIENDLY);
+
+  paramsRegisterValue(OPT_KIND_PARAMETER, OPT_TYPE_U8, nullptr, pgWifi, 
+    CONFIG_WIFI_RSSI_THERSHOLD_KEY, CONFIG_WIFI_RSSI_THERSHOLD_FRIENDLY, CONFIG_MQTT_PARAMS_QOS, &_wifiRssiThreshold);
 }
 
 // -----------------------------------------------------------------------------------------------------------------------
@@ -1015,6 +1031,11 @@ int8_t wifiRSSI()
   };
 
   return 0;
+}
+
+bool wifiRSSIIsOk()
+{
+  return wifiIsConnected() && (abs(wifiRSSI()) < _wifiRssiThreshold);
 }
 
 esp_netif_ip_info_t wifiLocalIP()
