@@ -291,7 +291,7 @@ bool wifiLowLevelInit()
 
     // Set the storage type of the Wi-Fi configuration in memory
     #ifdef CONFIG_WIFI_STORAGE
-      WIFI_ERROR_CHECK_BOOL(esp_wifi_set_storage(CONFIG_WIFI_STORAGE));
+      WIFI_ERROR_CHECK_BOOL(esp_wifi_set_storage(CONFIG_WIFI_STORAGE), "set WiFi configuration storage");
     #endif // CONFIG_WIFI_STORAGE
 
     // Register event handlers
