@@ -38,8 +38,8 @@ static const int _WIFI_STA_ENABLED            = BIT2;
 static const int _WIFI_STA_STARTED            = BIT3;
 static const int _WIFI_STA_CONNECTED          = BIT4;
 static const int _WIFI_STA_GOT_IP             = BIT5;
-static const int _WIFI_STA_DISCONNECT_STOP    = BIT6;
-static const int _WIFI_STA_DISCONNECT_RESTART = BIT7;
+static const int _WIFI_STA_DISCONNECT_STOP    = BIT6; // Disconnect and stop STA mode (offline)
+static const int _WIFI_STA_DISCONNECT_RESTORE = BIT7; // Disconnect and restore STA mode ("cold" reconnect)
 
 static uint32_t _wifiAttemptCount = 0;
 static EventGroupHandle_t _wifiStatusBits = nullptr;
@@ -156,7 +156,7 @@ EventBits_t wifiStatusWait(const EventBits_t bits, const BaseType_t clearOnExit,
 
 char* wifiStatusGetJsonEx(EventBits_t bits)
 {
-  return malloc_stringf("{\"init_tcpip\":%d,\"init_low\":%d,\"sta_enabled\":%d,\"sta_started\":%d,\"sta_connected\":%d,\"sta_got_ip\":%d,\"disconnect_and_stop\":%d,\"disconnect_and_restart\":%d}",
+  return malloc_stringf("{\"init_tcpip\":%d,\"init_low\":%d,\"sta_enabled\":%d,\"sta_started\":%d,\"sta_connected\":%d,\"sta_got_ip\":%d,\"disconnect_and_stop\":%d,\"disconnect_and_restore\":%d}",
     (bits & _WIFI_TCPIP_INIT) == _WIFI_TCPIP_INIT,
     (bits & _WIFI_LOWLEVEL_INIT) == _WIFI_LOWLEVEL_INIT,
     (bits & _WIFI_STA_ENABLED) == _WIFI_STA_ENABLED,
@@ -164,7 +164,7 @@ char* wifiStatusGetJsonEx(EventBits_t bits)
     (bits & _WIFI_STA_CONNECTED) == _WIFI_STA_CONNECTED,
     (bits & _WIFI_STA_GOT_IP) == _WIFI_STA_GOT_IP,
     (bits & _WIFI_STA_DISCONNECT_STOP) == _WIFI_STA_DISCONNECT_STOP,
-    (bits & _WIFI_STA_DISCONNECT_RESTART) == _WIFI_STA_DISCONNECT_RESTART);
+    (bits & _WIFI_STA_DISCONNECT_RESTORE) == _WIFI_STA_DISCONNECT_RESTORE);
 };
 
 char* wifiStatusGetJson()
@@ -336,11 +336,16 @@ bool wifiLowLevelDeinit()
 
 static esp_timer_handle_t _wifiTimer = nullptr;
 
+bool _wifiStopSTA();
+bool _wifiRestoreSTA();
 bool wifiReconnectWiFi();
 static void wifiTimeoutEnd(void* arg)
 {
-  rlog_e(logTAG, "Time-out!");
-  wifiReconnectWiFi();
+  rlog_e(logTAG, "WiFi operation time-out!");
+  if (!wifiReconnectWiFi()) {
+    _wifiRestoreSTA();
+    _wifiStopSTA();
+  };
 }
 
 static void wifiTimeoutCreate() 
@@ -625,9 +630,9 @@ bool _wifiStopSTA()
   return true;
 }
 
-bool _wifiResetSTA()
+bool _wifiRestoreSTA()
 {
-  rlog_w(logTAG, "Restore WiFi stack persistent settings to default values!");
+  rlog_w(logTAG, "Restore WiFi stack persistent settings to default values");
   WIFI_ERROR_CHECK_BOOL(esp_wifi_restore(), "restore WiFi stack persistent settings to default values");
   wifiTimeoutStart(CONFIG_WIFI_TIMEOUT);
   return true;
@@ -656,11 +661,14 @@ bool wifiStopWiFi()
 bool wifiRestartWiFi()
 {
   if (wifiStatusCheck(_WIFI_STA_CONNECTED, false)) {
-    return _wifiDisconnectSTA(_WIFI_STA_DISCONNECT_RESTART);
+    // Restore WiFi stack persistent settings to default values AND reconnect in event handler
+    return _wifiDisconnectSTA(_WIFI_STA_DISCONNECT_RESTORE);
   } else {
     if (wifiStatusCheck(_WIFI_STA_STARTED, false)) {
-      return _wifiResetSTA();
+      // Stop STA mode AND restart in event handler
+      return _wifiStopSTA();
     } else {
+      // Start STA Mode
       return _wifiStartSTA();
     };
   };
@@ -668,28 +676,38 @@ bool wifiRestartWiFi()
 
 bool wifiReconnectWiFi()
 {
+  rlog_d(logTAG, "WiFi reconnect...");
+  // Disable STA completely
   if (wifiStatusCheck(_WIFI_STA_DISCONNECT_STOP, true)) {
     return _wifiStopSTA();
-  } else if (wifiStatusCheck(_WIFI_STA_DISCONNECT_RESTART, true)) {
-    return _wifiResetSTA();
+  // Restore WiFi stack persistent settings to default values
+  } else if (wifiStatusCheck(_WIFI_STA_DISCONNECT_RESTORE, true)) {
+    return _wifiRestoreSTA();
   } else {
     if (wifiStatusCheck(_WIFI_STA_ENABLED, false)) {
-      if (_wifiAttemptCount > CONFIG_WIFI_RESTART_ATTEMPTS) {
-        return wifiRestartWiFi();
-      } else {
-        if (_wifiAttemptCount > CONFIG_WIFI_RECONNECT_ATTEMPTS) {
-          #ifndef CONFIG_WIFI_SSID
-          _wifiIndexNeedChange = true;
-          #endif // CONFIG_WIFI_SSID
-        };
-        #ifdef CONFIG_WIFI_SSID
-          vTaskDelay(pdMS_TO_TICKS(CONFIG_WIFI_RECONNECT_DELAY));
-        #else
-          if (!_wifiIndexNeedChange) {
-            vTaskDelay(pdMS_TO_TICKS(CONFIG_WIFI_RECONNECT_DELAY));
+      // STA is started
+      if (wifiStatusCheck(_WIFI_STA_STARTED, false)) {
+        // Restore WiFi (if connected) OR stop STA with restart in event handler
+        if (_wifiAttemptCount > CONFIG_WIFI_RESTART_ATTEMPTS) {
+          return wifiRestartWiFi();
+        } else {
+          // Try connecting to another network
+          if (_wifiAttemptCount > CONFIG_WIFI_RECONNECT_ATTEMPTS) {
+            #ifndef CONFIG_WIFI_SSID
+            _wifiIndexNeedChange = true;
+            #endif // CONFIG_WIFI_SSID
           };
-        #endif // CONFIG_WIFI_SSID
-        return wifiConnectSTA();
+          #ifdef CONFIG_WIFI_SSID
+            vTaskDelay(pdMS_TO_TICKS(CONFIG_WIFI_RECONNECT_DELAY));
+          #else
+            if (!_wifiIndexNeedChange) {
+              vTaskDelay(pdMS_TO_TICKS(CONFIG_WIFI_RECONNECT_DELAY));
+            };
+          #endif // CONFIG_WIFI_SSID
+          return wifiConnectSTA();
+        };
+      } else {
+        return _wifiStartSTA();
       };
     } else {
       wifiStopWiFi();
@@ -706,7 +724,7 @@ static void wifiEventHandler_Start(void* arg, esp_event_base_t event_base, int32
 {
   // Set status bits
   wifiStatusSet(_WIFI_STA_ENABLED | _WIFI_STA_STARTED);
-  wifiStatusClear(_WIFI_STA_CONNECTED | _WIFI_STA_GOT_IP | _WIFI_STA_DISCONNECT_STOP | _WIFI_STA_DISCONNECT_RESTART);
+  wifiStatusClear(_WIFI_STA_CONNECTED | _WIFI_STA_GOT_IP | _WIFI_STA_DISCONNECT_STOP | _WIFI_STA_DISCONNECT_RESTORE);
   // Reset attempts count
   _wifiAttemptCount = 0;
   _wifiLastErr = 0;
@@ -719,14 +737,16 @@ static void wifiEventHandler_Start(void* arg, esp_event_base_t event_base, int32
   wifiRestartTimerStart();
   #endif // CONFIG_WIFI_TIMER_RESTART_DEVICE
   // Start connection
-  wifiConnectSTA();
+  if (!wifiConnectSTA()) {
+    _wifiStopSTA();
+  };
 }
 
 static void wifiEventHandler_Connect(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
 {
   // Set status bits
   wifiStatusSet(_WIFI_STA_CONNECTED);
-  wifiStatusClear(_WIFI_STA_GOT_IP | _WIFI_STA_DISCONNECT_STOP | _WIFI_STA_DISCONNECT_RESTART);
+  wifiStatusClear(_WIFI_STA_GOT_IP | _WIFI_STA_DISCONNECT_STOP | _WIFI_STA_DISCONNECT_RESTORE);
   // Save successful connection number
   #ifndef CONFIG_WIFI_SSID
     _wifiIndexNeedChange = false;
@@ -773,13 +793,19 @@ static void wifiEventHandler_Disconnect(void* arg, esp_event_base_t event_base, 
         rlog_e(logTAG, "Failed to connect to WiFi network: beacon timeout!");
       };
       // Next connection attempt
-      wifiReconnectWiFi();
+      if (!wifiReconnectWiFi()) {
+        _wifiRestoreSTA();
+        _wifiStopSTA();
+      };
     } else if (event_id == IP_EVENT_STA_LOST_IP) {
       // Re-dispatch event to another loop
       eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_DISCONNECTED, nullptr, 0, portMAX_DELAY);
       rlog_e(logTAG, "WiFi connection [ %s ] lost WiFi IP address!", wifiGetSSID());
       // Next connection attempt
-      wifiReconnectWiFi();
+      if (!wifiReconnectWiFi()) {
+        _wifiRestoreSTA();
+        _wifiStopSTA();
+      };
     } else {
       wifi_event_sta_disconnected_t * data = (wifi_event_sta_disconnected_t*)event_data;
       if (data) {
@@ -799,7 +825,10 @@ static void wifiEventHandler_Disconnect(void* arg, esp_event_base_t event_base, 
         rlog_e(logTAG, "Failed to connect to WiFi network: #%d!", _wifiLastErr);
       };
       // Next connection attempt
-      wifiReconnectWiFi();
+      if (!wifiReconnectWiFi()) {
+        _wifiRestoreSTA();
+        _wifiStopSTA();
+      };
     };
   } else {
     // Stop WiFi
