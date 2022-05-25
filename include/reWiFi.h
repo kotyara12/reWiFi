@@ -47,7 +47,7 @@ esp_netif_ip_info_t wifiLocalIP();
 char* wifiGetLocalIP();
 char* wifiGetGatewayIP();
 const char* wifiGetHostname();
-esp_err_t wifiHostByName(const char* hostname, ip_addr_t* hostaddr);
+// esp_err_t wifiHostByName(const char* hostname, ip_addr_t* hostaddr);
 
 #ifdef __cplusplus
 }

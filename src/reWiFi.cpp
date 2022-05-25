@@ -1117,29 +1117,37 @@ const char* wifiGetHostname()
   return hostname;
 }
 
+/*
 esp_err_t wifiHostByName(const char* hostname, ip_addr_t* hostaddr)
 {
-  if ((hostname) && (hostaddr)) {
+  if ((hostname != nullptr) && (hostaddr != nullptr)) {
     rlog_d(logTAG, "Resolving address for host [ %s ]...", hostname);
 
     struct addrinfo addrHint;
     struct addrinfo *addrRes = nullptr;
-    memset(&addrHint, 0, sizeof(addrHint));
-    if (getaddrinfo(hostname, nullptr, &addrHint, &addrRes) != 0) {
+    memset(&addrHint, 0, sizeof(addrinfo));
+    if ((getaddrinfo(hostname, nullptr, &addrHint, &addrRes) != 0) && (addrRes != nullptr)) {
       rlog_e(logTAG, "Unknown host [ %s ]", hostname);
       return ESP_ERR_NOT_FOUND;
     };
 
-    struct in_addr addr4 = ((struct sockaddr_in *) (addrRes->ai_addr))->sin_addr;
-    inet_addr_to_ip4addr(ip_2_ip4(hostaddr), &addr4);
+    if (addrRes->ai_addr != nullptr) {
+      struct in_addr addr4 = ((struct sockaddr_in *) (addrRes->ai_addr))->sin_addr;
+      inet_addr_to_ip4addr(ip_2_ip4(hostaddr), &addr4);
+    };
     freeaddrinfo(addrRes);
-
+  
     if (IP_IS_V4(hostaddr)) {
-      uint8_t * ip = (uint8_t*)&(hostaddr->u_addr.ip4.addr);
-      rlog_d(logTAG, "IP address obtained for host [ %s ]: %d.%d.%d.%d", hostname, ip[0], ip[1], ip[2], ip[3]);
+      rlog_d(logTAG, "IP address obtained for host [ %s ]: %d.%d.%d.%d", 
+        hostname, 
+        ip4_addr1(&hostaddr->u_addr.ip4),
+        ip4_addr2(&hostaddr->u_addr.ip4),
+        ip4_addr3(&hostaddr->u_addr.ip4),
+        ip4_addr4(&hostaddr->u_addr.ip4));
     };
 
     return ESP_OK;
   };
   return ESP_ERR_INVALID_ARG;
 }
+*/
