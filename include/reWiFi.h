@@ -15,17 +15,22 @@ extern "C" {
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "sdkconfig.h"
-#include "esp_netif.h"
-#include "esp_wifi_types.h"
-#include "lwip/inet.h"
-#include "lwip/netdb.h"
-#include "lwip/sockets.h"
-#include "lwip/ip_addr.h"
+#include <cstring>
+#include <time.h> 
+#include "project_config.h"
+#include "def_consts.h"
+#include "rLog.h"
+#include "rTypes.h"
+#include "rStrings.h"
+#include "reNvs.h"
+#include "reEsp32.h"
+#include "reEvents.h"
+#include "reParams.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "freertos/event_groups.h"
+
 
 bool wifiInit();
 bool wifiStart();
