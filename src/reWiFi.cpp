@@ -53,7 +53,7 @@ StaticEventGroup_t _wifiStatusBitsBuffer;
 #endif // CONFIG_WIFI_STATIC_ALLOCATION
 
 #if defined(CONFIG_WIFI_TIMER_RESTART_DEVICE) && CONFIG_WIFI_TIMER_RESTART_DEVICE > 0
-  static re_restart_timer_t _wifiWrongTimer;
+  static re_restart_timer_t _wdtRestartWiFi;
 #endif // CONFIG_WIFI_TIMER_RESTART_DEVICE
 
 #define WIFI_ERROR_CHECK_LOG(x, msg) do {                                               \
@@ -688,7 +688,7 @@ static void wifiEventHandler_Start(void* arg, esp_event_base_t event_base, int32
   rlog_i(logTAG, "WiFi STA started");
   // Start device restart timer
   #if defined(CONFIG_WIFI_TIMER_RESTART_DEVICE) && CONFIG_WIFI_TIMER_RESTART_DEVICE > 0
-    espRestartTimerStartM(&_wifiWrongTimer, RR_WIFI_TIMEOUT, CONFIG_WIFI_TIMER_RESTART_DEVICE, false);
+    espRestartTimerStartM(&_wdtRestartWiFi, RR_WIFI_TIMEOUT, CONFIG_WIFI_TIMER_RESTART_DEVICE, false);
   #endif // CONFIG_WIFI_TIMER_RESTART_DEVICE
   // Start connection
   if (!wifiConnectSTA()) {
@@ -732,7 +732,7 @@ static void wifiEventHandler_Disconnect(void* arg, esp_event_base_t event_base, 
   wifiTimeoutStop();
   // Start device restart timer
   #if defined(CONFIG_WIFI_TIMER_RESTART_DEVICE) && CONFIG_WIFI_TIMER_RESTART_DEVICE > 0
-    espRestartTimerStartM(&_wifiWrongTimer, RR_WIFI_TIMEOUT, CONFIG_WIFI_TIMER_RESTART_DEVICE, false);
+    espRestartTimerStartM(&_wdtRestartWiFi, RR_WIFI_TIMEOUT, CONFIG_WIFI_TIMER_RESTART_DEVICE, false);
   #endif // CONFIG_WIFI_TIMER_RESTART_DEVICE
   // Check for forced (manual) WiFi disconnection
   if (wifiStatusCheck(_WIFI_STA_ENABLED, false)) {
@@ -807,7 +807,7 @@ static void wifiEventHandler_Stop(void* arg, esp_event_base_t event_base, int32_
   } else {
     // Delete device restart timer
     #if defined(CONFIG_WIFI_TIMER_RESTART_DEVICE) && CONFIG_WIFI_TIMER_RESTART_DEVICE > 0
-      espRestartTimerStartM(&_wifiWrongTimer, RR_WIFI_TIMEOUT, CONFIG_WIFI_TIMER_RESTART_DEVICE, false);
+      espRestartTimerStartM(&_wdtRestartWiFi, RR_WIFI_TIMEOUT, CONFIG_WIFI_TIMER_RESTART_DEVICE, false);
     #endif // CONFIG_WIFI_TIMER_RESTART_DEVICE
     // Low-level deinit
     wifiLowLevelDeinit();
@@ -838,9 +838,9 @@ static void wifiEventHandler_GotIP(void* arg, esp_event_base_t event_base, int32
   };
   // Delete timer
   wifiTimeoutDelete();
-  // Delete device restart timer
+  // Stop device restart timer
   #if defined(CONFIG_WIFI_TIMER_RESTART_DEVICE) && CONFIG_WIFI_TIMER_RESTART_DEVICE > 0
-    espRestartTimerFree(&_wifiWrongTimer);
+    espRestartTimerBreak(&_wdtRestartWiFi);
   #endif // CONFIG_WIFI_TIMER_RESTART_DEVICE
 }
 
@@ -916,6 +916,9 @@ bool wifiInit()
     xEventGroupClearBits(_wifiStatusBits, 0x00FFFFFF);
   };
   wifiRegisterParameters();
+  #if defined(CONFIG_WIFI_TIMER_RESTART_DEVICE) && CONFIG_WIFI_TIMER_RESTART_DEVICE > 0
+    espRestartTimerInit(&_wdtRestartWiFi, RR_WIFI_TIMEOUT, "wdt_wifi");
+  #endif // CONFIG_WIFI_TIMER_RESTART_DEVICE
   return true;
 }
 
@@ -950,6 +953,9 @@ bool wifiFree()
     vEventGroupDelete(_wifiStatusBits);
     _wifiStatusBits = nullptr;
   };
+  #if defined(CONFIG_WIFI_TIMER_RESTART_DEVICE) && CONFIG_WIFI_TIMER_RESTART_DEVICE > 0
+    espRestartTimerFree(&_wdtRestartWiFi);
+  #endif // CONFIG_WIFI_TIMER_RESTART_DEVICE
   return true;
 }
 
