@@ -530,20 +530,6 @@ bool wifiConnectSTA()
 
   // Configure WiFi
   WIFI_ERROR_CHECK_BOOL(esp_wifi_set_config(WIFI_IF_STA, &conf), "set the configuration of the ESP32 STA");
-  #ifdef CONFIG_WIFI_BANDWIDTH
-    // Theoretically the HT40 can gain better throughput because the maximum raw physicial 
-    // (PHY) data rate for HT40 is 150Mbps while it’s 72Mbps for HT20. 
-    // However, if the device is used in some special environment, e.g. there are too many other Wi-Fi devices around the ESP32 device, 
-    // the performance of HT40 may be degraded. So if the applications need to support same or similar scenarios, 
-    // it’s recommended that the bandwidth is always configured to HT20.
-    // https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/wifi.html#wi-fi-ht20-40
-    WIFI_ERROR_CHECK_BOOL(esp_wifi_set_bandwidth(WIFI_IF_STA, CONFIG_WIFI_BANDWIDTH), "set the bandwidth");
-  #endif // CONFIG_WIFI_BANDWIDTH
-  #ifdef CONFIG_WIFI_LONGRANGE
-    // Long Range (LR). Since LR is Espressif unique Wi-Fi mode, only ESP32 devices can transmit and receive the LR data
-    // more info: https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/wifi.html#wi-fi-protocol-mode
-    WIFI_ERROR_CHECK_BOOL(esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_LR), "set protocol Long Range");
-  #endif // CONFIG_WIFI_LONGRANGE
 
   // Wi-Fi Connect Phase
   // https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/wifi.html#wi-fi-connect-phase
@@ -561,8 +547,22 @@ bool wifiConnectSTA()
 
 bool _wifiStartSTA()
 {
-  rlog_d(logTAG, "Start WiFi STA mode...");
+  rlog_i(logTAG, "Start WiFi STA mode...");
   WIFI_ERROR_CHECK_BOOL(esp_wifi_set_mode(WIFI_MODE_STA), "set the WiFi operating mode");
+  #ifdef CONFIG_WIFI_BANDWIDTH
+    // Theoretically the HT40 can gain better throughput because the maximum raw physicial 
+    // (PHY) data rate for HT40 is 150Mbps while it’s 72Mbps for HT20. 
+    // However, if the device is used in some special environment, e.g. there are too many other Wi-Fi devices around the ESP32 device, 
+    // the performance of HT40 may be degraded. So if the applications need to support same or similar scenarios, 
+    // it’s recommended that the bandwidth is always configured to HT20.
+    // https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/wifi.html#wi-fi-ht20-40
+    WIFI_ERROR_CHECK_BOOL(esp_wifi_set_bandwidth(WIFI_IF_STA, CONFIG_WIFI_BANDWIDTH), "set the bandwidth");
+  #endif // CONFIG_WIFI_BANDWIDTH
+  #ifdef CONFIG_WIFI_LONGRANGE
+    // Long Range (LR). Since LR is Espressif unique Wi-Fi mode, only ESP32 devices can transmit and receive the LR data
+    // more info: https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/wifi.html#wi-fi-protocol-mode
+    WIFI_ERROR_CHECK_BOOL(esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_LR), "set protocol Long Range");
+  #endif // CONFIG_WIFI_LONGRANGE
   WIFI_ERROR_CHECK_BOOL(esp_wifi_start(), "start WiFi");
   wifiTimeoutStart(CONFIG_WIFI_TIMEOUT);
   return true;
@@ -794,10 +794,10 @@ static void wifiEventHandler_Stop(void* arg, esp_event_base_t event_base, int32_
 {
   // Reset status bits
   wifiStatusClear(_WIFI_STA_STARTED | _WIFI_STA_CONNECTED | _WIFI_STA_GOT_IP);
-  // Re-dispatch event to another loop
-  eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_STOPPED, nullptr, 0, portMAX_DELAY);  
   // Log
   rlog_w(logTAG, "WiFi STA stopped");
+  // Re-dispatch event to another loop
+  eventLoopPost(RE_WIFI_EVENTS, RE_WIFI_STA_STOPPED, nullptr, 0, portMAX_DELAY);  
   // Delete timer
   wifiTimeoutDelete();
   // If WiFi is enabled, restart it
