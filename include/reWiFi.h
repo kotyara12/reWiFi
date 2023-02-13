@@ -17,6 +17,8 @@ extern "C" {
 #include <stdbool.h>
 #include <cstring>
 #include <time.h> 
+#include "esp_wifi_types.h"
+#include "esp_wifi.h"
 #include "project_config.h"
 #include "def_consts.h"
 #include "rLog.h"

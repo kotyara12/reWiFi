@@ -9,8 +9,6 @@
 #include "reWiFi.h"
 #include "sdkconfig.h"
 #include "esp_netif.h"
-#include "esp_wifi_types.h"
-#include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_timer.h"
 #include "lwip/inet.h"
@@ -233,11 +231,11 @@ bool wifiTcpIpInit()
 {
   rlog_d(logTAG, "TCP-IP initialization...");
 
-  // MAC address initialization
-  uint8_t mac[8];
-  if (esp_efuse_mac_get_default(mac) == ESP_OK) {
-    WIFI_ERROR_CHECK_BOOL(esp_base_mac_addr_set(mac), "set MAC address");
-  };
+  // MAC address initialization: deprecated since ESP-IDF 5.0.0
+  // uint8_t mac[8];
+  // if (esp_efuse_mac_get_default(mac) == ESP_OK) {
+  //   WIFI_ERROR_CHECK_BOOL(esp_base_mac_addr_set(mac), "set MAC address");
+  // };
 
   // Start the system events task
   esp_err_t err = esp_event_loop_create_default();
@@ -1070,7 +1068,7 @@ const char* wifiGetHostname()
     return hostname;
   };
 
-  if (tcpip_adapter_get_hostname(TCPIP_ADAPTER_IF_STA, &hostname)) {
+  if (esp_netif_get_hostname(_wifiNetif, &hostname)) {
     return NULL;
   };
 
