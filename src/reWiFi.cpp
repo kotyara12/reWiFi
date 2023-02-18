@@ -175,9 +175,9 @@ char* wifiStatusGetJson()
 
 void wifiStoreDebugInfo()
 {
-  uint32_t curr = time(nullptr);
+  int64_t  curr = time(nullptr);
   uint32_t bits = wifiStatusGet();
-  nvsWrite(wifiNvsGroup, wifiNvsDebug, OPT_TYPE_U32, &curr);
+  nvsWrite(wifiNvsGroup, wifiNvsDebug, OPT_TYPE_I64, &curr);
   nvsWrite(wifiNvsGroup, wifiNvsReason, OPT_TYPE_U8, &_wifiLastErr);
   nvsWrite(wifiNvsGroup, wifiNvsBits, OPT_TYPE_U32, &bits);
   #ifndef CONFIG_WIFI_SSID
@@ -190,14 +190,14 @@ char* wifiGetDebugInfo()
 {
   uint8_t  last_index = 0;
   uint8_t  last_reason = 0;
-  uint32_t time_restart = 0;
-  uint32_t time_clear = 0;
+  time_t   time_restart = 0;
+  time_t   time_clear = 0;
   uint32_t attempts = 0;
   uint32_t bits = 0;
 
-  nvsRead(wifiNvsGroup, wifiNvsDebug, OPT_TYPE_U32, &time_restart);
+  nvsRead(wifiNvsGroup, wifiNvsDebug, OPT_TYPE_U64, (uint64_t*)&time_restart);
   if (time_restart > 0) {
-    nvsWrite(wifiNvsGroup, wifiNvsDebug, OPT_TYPE_U32, &time_clear);
+    nvsWrite(wifiNvsGroup, wifiNvsDebug, OPT_TYPE_U64, (uint64_t*)&time_clear);
     nvsRead(wifiNvsGroup, wifiNvsReason, OPT_TYPE_U8, &last_reason);
     nvsRead(wifiNvsGroup, wifiNvsCurrIndex, OPT_TYPE_U8, &last_index);
     nvsRead(wifiNvsGroup, wifiNvsAttCount, OPT_TYPE_U32, &attempts);
@@ -206,8 +206,10 @@ char* wifiGetDebugInfo()
     char* _json = nullptr;
     char* _states = wifiStatusGetJsonEx(bits);
     if (_states) {
-      _json = malloc_stringf("{\"last_error\":%d,\"unixtime\":%d,\"index\":%d,\"attempts\":%d,\"bits\":%d,\"states\":%s}",
-        last_reason, time_restart, last_index, attempts, bits, _states);
+      char timebuf[CONFIG_FORMAT_STRFTIME_DTS_BUFFER_SIZE];
+      time2str(CONFIG_FORMAT_DTS, &time_restart, timebuf, sizeof(timebuf));
+      _json = malloc_stringf("{\"last_error\":%d,\"time_restart\":%s,\"index\":%d,\"attempts\":%d,\"bits\":%d,\"states\":%s}",
+        last_reason, timebuf, last_index, attempts, bits, _states);
       free(_states);
       return _json;
     };
