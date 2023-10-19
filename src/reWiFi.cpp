@@ -339,6 +339,7 @@ static esp_timer_handle_t _wifiTimer = nullptr;
 bool _wifiStopSTA();
 bool _wifiRestoreSTA();
 bool wifiReconnectWiFi();
+
 static void wifiTimeoutEnd(void* arg)
 {
   rlog_e(logTAG, "WiFi operation time-out!");
@@ -375,7 +376,7 @@ static void wifiTimeoutStart(uint32_t ms_timeout)
     if (esp_timer_is_active(_wifiTimer)) {
       esp_timer_stop(_wifiTimer);
     };
-    if (esp_timer_start_once(_wifiTimer, ms_timeout * 1000) == ESP_OK) {
+    if (esp_timer_start_once(_wifiTimer, (uint64_t)ms_timeout * 1000) == ESP_OK) {
       rlog_v(logTAG, "WiFi timer was started");
     } else {  
       rlog_e(logTAG, "Failed to start timeout timer");
