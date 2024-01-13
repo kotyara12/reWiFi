@@ -525,6 +525,11 @@ bool wifiConnectSTA()
     };
   #endif // CONFIG_WIFI_SSID
   
+  // Select the best access point based on signal strength (MESH systems only)
+  conf.sta.rm_enabled = true;
+  conf.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+  conf.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+
   // Support for Protected Management Frame
   conf.sta.pmf_cfg.capable = true;
   conf.sta.pmf_cfg.required = false;
