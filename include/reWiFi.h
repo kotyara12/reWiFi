@@ -6,6 +6,11 @@
    kotyara12@yandex.ru | https://kotyara12.ru | tg: @kotyara1971
 */
 
+#include "project_config.h"
+#include "def_consts.h"
+
+#if !defined(CONFIG_WIFI_ENABLED) || (CONFIG_WIFI_ENABLED == 1)
+
 #ifndef __RE_WIFI_H__
 #define __RE_WIFI_H__ 
 
@@ -19,8 +24,6 @@ extern "C" {
 #include <time.h> 
 #include "esp_wifi_types.h"
 #include "esp_wifi.h"
-#include "project_config.h"
-#include "def_consts.h"
 #include "rLog.h"
 #include "rTypes.h"
 #include "rStrings.h"
@@ -61,3 +64,5 @@ const char* wifiGetHostname();
 #endif
 
 #endif // __RE_WIFI_H__
+
+#endif // CONFIG_WIFI_ENABLED

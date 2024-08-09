@@ -2,11 +2,14 @@
    EN: Module for automatically maintaining a constant connection to WiFi in STA mode
    RU: Модуль для автоматического поддержания постоянного подключения к WiFi в режиме STA
    --------------------------
-   (с) 2020-2021 Разживин Александр | Razzhivin Alexander
+   (с) 2020-2024 Разживин Александр | Razzhivin Alexander
    kotyara12@yandex.ru | https://kotyara12.ru | tg: @kotyara1971
 */
 
 #include "reWiFi.h"
+
+#if !defined(CONFIG_WIFI_ENABLED) || (CONFIG_WIFI_ENABLED == 1)
+
 #include "sdkconfig.h"
 #include "esp_netif.h"
 #include "esp_event.h"
@@ -242,7 +245,7 @@ bool wifiTcpIpInit()
   // Start the system events task
   esp_err_t err = esp_event_loop_create_default();
   if (!((err == ESP_OK) || (err == ESP_ERR_INVALID_STATE))) {
-    rlog_e(logTAG, "Failed to create event loop: %d", err);
+    rlog_e(logTAG, "Failed to create default event loop: %d (%s)", err, esp_err_to_name(err));
     return false;
   };
 
@@ -836,7 +839,7 @@ static void wifiEventHandler_GotIP(void* arg, esp_event_base_t event_base, int32
       uint8_t * ip = (uint8_t*)&(data->ip_info.ip.addr);
       uint8_t * mask = (uint8_t*)&(data->ip_info.netmask.addr);
       uint8_t * gw = (uint8_t*)&(data->ip_info.gw.addr);
-      rlog_i(logTAG, "Got IP-address: %d.%d.%d.%d, mask: %d.%d.%d.%d, gateway: %d.%d.%d.%d",
+      rlog_i(logTAG, "WiFi got IP-address: %d.%d.%d.%d, mask: %d.%d.%d.%d, gateway: %d.%d.%d.%d",
           ip[0], ip[1], ip[2], ip[3], mask[0], mask[1], mask[2], mask[3], gw[0], gw[1], gw[2], gw[3]);
     #endif
   } else {
@@ -1117,3 +1120,5 @@ esp_err_t wifiHostByName(const char* hostname, ip_addr_t* hostaddr)
   return ESP_ERR_INVALID_ARG;
 }
 */
+
+#endif // CONFIG_WIFI_ENABLED
